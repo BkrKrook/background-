@@ -1,0 +1,14 @@
+{
+  "name": "aurora-lockscreen",
+  "version": "1.0.0",
+  "description": "Perfectly-looping aurora live wallpaper for iPhone lock screen",
+  "scripts": {
+    "render": "node render.mjs"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
+    "playwright-core": "^1.61.1"
+  },
+  "private": true
+}
