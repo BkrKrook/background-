@@ -1,48 +1,85 @@
-# Aurora — Live Animated Background for iPhone Lock Screen
+# 🚕 Bolt vs Uber – prisjämförelse
 
-A perfectly-looping northern-lights animation (6 s, 30 fps, 1080×2340 — the
-iPhone lock screen aspect ratio), plus the pipeline that renders it.
+En webbapp som jämför **uppskattade priser för Bolt och Uber** i svenska städer.
+Ange var du är och vart du ska, så räknar appen ut rutten och visar vad resan
+ungefär kostar med båda tjänsterna – kategori för kategori – och vilket som ser
+billigast ut. Därifrån öppnar du rätt app med resan förifylld.
 
-- **`aurora-wallpaper.mp4`** — the ready-to-use looping wallpaper video
-- **`preview.gif`** — small preview of the animation
-- **`index.html`** — the animation itself (open in any browser for a live preview)
-- **`render.mjs`** — offline renderer (headless Chromium → PNG frames → ffmpeg)
+> **Obs:** "Volt" i uppdraget har tolkats som **Bolt** – taxitjänsten som
+> konkurrerar med Uber i Sverige.
 
-## Put it on your iPhone lock screen
+![Skärmdump av appen](docs/screenshot.png)
 
-iOS animates **Live Photos** on the lock screen (press and hold, and the
-wake animation on supported models). Convert the MP4 to a Live Photo:
+## Funktioner
 
-### Option A — intoLive app (easiest)
-1. AirDrop / save `aurora-wallpaper.mp4` to your iPhone (it lands in Photos).
-2. Install the free **intoLive** app from the App Store.
-3. Open intoLive → pick the video → **Make** → save as Live Photo.
-4. Settings → Wallpaper → **Add New Wallpaper** → **Photos** → choose the
-   Live Photo → make sure the Live Photo (◉) toggle is on → Set as Lock Screen.
-5. Press and hold the lock screen (or just raise to wake on newer iOS
-   versions) and the aurora flows.
+- 🔍 **Adressökning med förslag** (OpenStreetMap/Nominatim) och 📍-knapp för din
+  nuvarande position
+- 🗺️ **Verklig körrutt** via OSRM med sträcka och restid, ritad på karta
+  (Leaflet) – med fågelvägs-fallback om ruttjänsten inte kan nås
+- 💰 **Pris per kategori**: Standard (Bolt/UberX), Comfort och XL, med tydlig
+  markering av vilken tjänst som är billigast och hur mycket
+- ⚡ **Rusningsreglage** per tjänst för att simulera dynamisk prissättning
+- ⚙️ **Justerbara taxor** per stad (startavgift, kr/km, kr/min, minimipris) som
+  sparas lokalt i webbläsaren – kalibrera mot dina senaste kvitton
+- 📲 **Djuplänkar** som öppnar Bolt- respektive Uber-appen med resan förifylld
+- 🌙 Mörkt läge, mobilanpassad, ingen backend och inga API-nycklar
 
-### Option B — Shortcuts / other converters
-Any "video to Live Photo" shortcut or app works — the video is a clean
-6-second seamless loop, so any segment of it looks right.
+Städer med inbyggda taxor: Stockholm, Göteborg, Malmö och Uppsala.
 
-### Option C — live web preview
-Open `index.html` in Safari (or serve it with `npx serve .`) for the
-full-screen animated version in the browser.
+## Kom igång
 
-## Re-render / customize
+Appen är helt statisk – inga byggsteg, inget npm.
 
 ```bash
-npm install
-npm run render     # writes aurora-wallpaper.mp4 + preview.gif
+# valfritt alternativ:
+open index.html                # öppna direkt i webbläsaren
+python3 -m http.server 8000    # eller servera lokalt → http://localhost:8000
+npx serve .                    # eller med node
 ```
 
-Tweak the look in `index.html`:
+Vill du ha den på nätet: aktivera **GitHub Pages** för repot (Settings → Pages
+→ Deploy from branch) så serveras `index.html` direkt.
 
-- `ribbons` — colors, position, sway amplitude and speed of each aurora curtain
-- `LOOP` — seconds per loop (keep wave speeds integers for a seamless loop)
-- `RENDER_W` / `RENDER_H` — output resolution
-- star count, mountain ridges, sky gradient — all in the same file
+## Hur priserna räknas ut
 
-Every time-dependent term is `sin(2π · k · t / LOOP)` with integer `k`, so
-the last frame flows back into the first with no visible seam.
+Varken Bolt eller Uber har öppna pris-API:er, så appen använder samma formel
+som tjänsterna själva redovisar för sina taxor:
+
+```
+pris = max(minimipris, startavgift + kr/km × sträcka + kr/min × restid) × rusningsfaktor
+```
+
+- **Sträcka och restid** hämtas från OSRM:s publika ruttjänst (restiden skalas
+  upp 20 % eftersom OSRM är optimistisk i stadstrafik). Om tjänsten inte nås
+  används fågelväg × 1,35 och en antagen snittfart, tydligt markerat i
+  resultatet.
+- **Taxorna** är riktvärden (listpriser utan rusning) och kan glida över tid –
+  därför är de redigerbara under *Justera taxor* och sparas i `localStorage`.
+- **Rusningstillägg** (surge) varierar minut för minut och kan inte hämtas
+  externt; använd reglagen för att simulera, och dubbelkolla alltid det exakta
+  priset i apparna innan du bokar – knapparna tar dig dit med resan ifylld.
+
+## Teknik
+
+| Del | Val |
+|---|---|
+| Frontend | Vanilla HTML/CSS/JS, inga beroenden att installera |
+| Geokodning | [Nominatim](https://nominatim.org/) (OpenStreetMap) |
+| Ruttberäkning | [OSRM](http://project-osrm.org/) demoserver |
+| Karta | [Leaflet](https://leafletjs.com/) via CDN (appen fungerar även utan) |
+| Prislogik | `pricing.js` – ren modul som delas mellan webbläsare och tester |
+
+## Tester
+
+```bash
+node test/pricing.test.cjs
+```
+
+Testar prisformeln, minimipriser, rusningsfaktorer, jämförelselogiken,
+sammanslagning av sparade taxejusteringar samt avstånds-fallbacken.
+
+## Ansvarsfriskrivning
+
+Detta är en inofficiell jämförelse utan koppling till Bolt eller Uber.
+Alla priser är uppskattningar; det pris som visas i respektive app vid
+bokningstillfället är det som gäller.

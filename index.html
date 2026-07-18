@@ -1,222 +1,110 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="sv">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<title>Aurora — iPhone Live Wallpaper</title>
-<style>
-  html, body { margin: 0; padding: 0; height: 100%; background: #020412; overflow: hidden; }
-  canvas { display: block; width: 100vw; height: 100vh; object-fit: cover; }
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bolt vs Uber – prisjämförelse</title>
+  <meta name="description" content="Jämför uppskattade priser för Bolt och Uber i svenska städer – ange resa, se pris per kategori och öppna rätt app.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%9A%95%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+  <!-- Kart-css laddas utan att blockera första målningen; appen fungerar även utan. -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""
+        media="print" onload="this.media='all'">
 </head>
 <body>
-<canvas id="c"></canvas>
-<script>
-// ============================================================
-// Aurora lock-screen wallpaper.
-// Every time-dependent term is a sin/cos of 2*PI*k*t/LOOP with
-// integer k, so the animation loops perfectly every LOOP seconds.
-// ============================================================
-const LOOP = 6;            // seconds per perfect loop
-const RENDER_W = 1080;     // 19.5:9 — matches iPhone lock screen aspect
-const RENDER_H = 2340;
+  <header>
+    <h1>🚕 <span class="brand-bolt">Bolt</span> <span class="vs">vs</span> <span class="brand-uber">Uber</span></h1>
+    <p class="tagline">Jämför uppskattade priser för din resa</p>
+  </header>
 
-const TAU = Math.PI * 2;
+  <main>
+    <form id="trip-form" class="card" autocomplete="off">
+      <div class="field">
+        <label for="city">Stad (taxa)</label>
+        <select id="city"></select>
+      </div>
 
-// Deterministic PRNG so offline-rendered frames match exactly.
-function mulberry32(seed) {
-  return function () {
-    seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
-    let z = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-    z = (z + Math.imul(z ^ (z >>> 7), 61 | z)) ^ z;
-    return ((z ^ (z >>> 14)) >>> 0) / 4294967296;
-  };
-}
+      <div class="field addr">
+        <label for="from">Från</label>
+        <div class="addr-row">
+          <input id="from" type="text" placeholder="Adress eller plats …" spellcheck="false">
+          <button type="button" id="locate" class="icon-btn" title="Använd min position" aria-label="Använd min position">📍</button>
+        </div>
+        <ul id="from-suggestions" class="suggestions" role="listbox" hidden></ul>
+      </div>
 
-const canvas = document.getElementById('c');
-canvas.width = RENDER_W;
-canvas.height = RENDER_H;
-const ctx = canvas.getContext('2d');
+      <div class="field addr">
+        <label for="to">Till</label>
+        <input id="to" type="text" placeholder="Vart ska du?" spellcheck="false">
+        <ul id="to-suggestions" class="suggestions" role="listbox" hidden></ul>
+      </div>
 
-// Low-res offscreen buffer for the aurora glow; upscaling it gives
-// a soft natural blur for free.
-const GW = 270, GH = 585;
-const glow = document.createElement('canvas');
-glow.width = GW; glow.height = GH;
-const gctx = glow.getContext('2d');
+      <button type="submit" id="compare" class="primary">Jämför priser</button>
+      <p id="status" class="status" role="status"></p>
+    </form>
 
-// ---------- static scene elements (seeded, computed once) ----------
-const rand = mulberry32(1337);
+    <section id="results" class="card" hidden aria-live="polite">
+      <div id="route-summary" class="route-summary"></div>
+      <div id="verdict" class="verdict"></div>
 
-const stars = [];
-for (let i = 0; i < 170; i++) {
-  stars.push({
-    x: rand(),
-    y: rand() * 0.62,
-    r: 0.6 + rand() * 1.7,
-    base: 0.25 + rand() * 0.55,
-    k: 1 + Math.floor(rand() * 3),   // integer cycles per loop -> seamless twinkle
-    phase: rand(),
-  });
-}
+      <table class="price-table">
+        <thead>
+          <tr>
+            <th scope="col">Kategori</th>
+            <th scope="col" class="col-bolt">Bolt</th>
+            <th scope="col" class="col-uber">Uber</th>
+            <th scope="col">Skillnad</th>
+          </tr>
+        </thead>
+        <tbody id="price-rows"></tbody>
+      </table>
 
-// Two mountain ridgelines along the bottom.
-function makeRidge(seed, points, base, amp) {
-  const r = mulberry32(seed);
-  const ys = [];
-  let y = base;
-  for (let i = 0; i <= points; i++) {
-    y += (r() - 0.5) * amp;
-    y = Math.max(base - amp * 1.6, Math.min(base + amp * 1.6, y));
-    ys.push(y);
-  }
-  return ys;
-}
-const ridgeFar = makeRidge(42, 24, 0.845, 0.028);
-const ridgeNear = makeRidge(7, 16, 0.905, 0.034);
+      <details class="surge">
+        <summary>Rusningstillägg (dynamisk prissättning)</summary>
+        <div class="surge-row">
+          <span class="dot bolt-dot" aria-hidden="true"></span>
+          <label for="surge-bolt">Bolt</label>
+          <input type="range" id="surge-bolt" min="0.8" max="2.5" step="0.05" value="1">
+          <output id="surge-bolt-out" for="surge-bolt">1,00×</output>
+        </div>
+        <div class="surge-row">
+          <span class="dot uber-dot" aria-hidden="true"></span>
+          <label for="surge-uber">Uber</label>
+          <input type="range" id="surge-uber" min="0.8" max="2.5" step="0.05" value="1">
+          <output id="surge-uber-out" for="surge-uber">1,00×</output>
+        </div>
+        <p class="hint">Båda apparna höjer priset när efterfrågan är hög. Dra i reglagen för att simulera – kolla apparna för läget just nu.</p>
+      </details>
 
-// Aurora ribbons: color, vertical anchor, curtain length, motion params.
-// All wave speeds are integers (cycles per loop).
-const ribbons = [
-  { color: [64, 255, 190],  yc: 0.30, len: 0.34, amp: 0.055, fx: 1.6, sp: 1, fx2: 3.9, sp2: 2, alpha: 0.42 },
-  { color: [120, 235, 255], yc: 0.40, len: 0.26, amp: 0.045, fx: 2.3, sp: -1, fx2: 5.1, sp2: 1, alpha: 0.30 },
-  { color: [150, 110, 255], yc: 0.22, len: 0.30, amp: 0.065, fx: 1.2, sp: 1, fx2: 2.8, sp2: -2, alpha: 0.26 },
-  { color: [70, 160, 255],  yc: 0.50, len: 0.20, amp: 0.035, fx: 3.1, sp: -2, fx2: 6.3, sp2: 1, alpha: 0.20 },
-];
+      <div class="deeplinks">
+        <a id="open-bolt" class="applink bolt" href="bolt://action/rideRequest">Öppna Bolt</a>
+        <a id="open-uber" class="applink uber" href="https://m.uber.com/ul/">Öppna Uber</a>
+      </div>
+      <p class="hint">Knapparna öppnar respektive app med resan förifylld (på mobil med appen installerad) så att du kan dubbelkolla det exakta priset innan du bokar.</p>
 
-// ---------- drawing ----------
-function drawSky() {
-  const g = ctx.createLinearGradient(0, 0, 0, RENDER_H);
-  g.addColorStop(0.00, '#01030e');
-  g.addColorStop(0.45, '#060b26');
-  g.addColorStop(0.80, '#12102f');
-  g.addColorStop(1.00, '#1b1230');
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, RENDER_W, RENDER_H);
-}
+      <div id="map" hidden></div>
 
-function drawAurora(t) {
-  const p = t / LOOP; // 0..1 loop phase
-  gctx.clearRect(0, 0, GW, GH);
-  gctx.globalCompositeOperation = 'lighter';
+      <p class="disclaimer">Priserna är uppskattningar från listpriser och kan avvika, särskilt vid hög efterfrågan, köer eller kampanjer. Apparna visar alltid exakt pris innan du bokar.</p>
+    </section>
 
-  const step = 2;
-  for (const rb of ribbons) {
-    const [cr, cg, cb] = rb.color;
-    for (let x = 0; x < GW; x += step) {
-      const u = x / GW;
-      // ribbon centreline — sums of sines, integer speeds => perfect loop
-      const yc = (rb.yc
-        + rb.amp * Math.sin(TAU * (u * rb.fx + rb.sp * p))
-        + rb.amp * 0.45 * Math.sin(TAU * (u * rb.fx2 + rb.sp2 * p))) * GH;
-      // curtain shimmer: brightness ripples travelling along the ribbon
-      const shimmer = 0.68
-        + 0.32 * Math.sin(TAU * (u * 5.0 + 3 * p))
-        * Math.sin(TAU * (u * 1.7 - 2 * p));
-      const len = rb.len * GH * (0.75 + 0.25 * Math.sin(TAU * (u * 1.3 + p)));
-      const a = rb.alpha * shimmer;
-      if (a <= 0.01) continue;
+    <section class="card">
+      <details>
+        <summary>⚙️ Justera taxor</summary>
+        <p class="hint">Riktvärden per stad. Justera mot dina senaste kvitton om de glidit – ändringarna sparas i din webbläsare.</p>
+        <div id="tariff-tables"></div>
+        <button type="button" id="reset-tariffs" class="secondary">Återställ standardtaxor</button>
+      </details>
+    </section>
+  </main>
 
-      const grad = gctx.createLinearGradient(0, yc - len, 0, yc + len * 0.35);
-      grad.addColorStop(0, `rgba(${cr},${cg},${cb},0)`);
-      grad.addColorStop(0.55, `rgba(${cr},${cg},${cb},${(a * 0.55).toFixed(3)})`);
-      grad.addColorStop(0.85, `rgba(${cr},${cg},${cb},${a.toFixed(3)})`);
-      grad.addColorStop(1, `rgba(${cr},${cg},${cb},0)`);
-      gctx.fillStyle = grad;
-      gctx.fillRect(x, yc - len, step, len * 1.35);
-    }
-  }
-  gctx.globalCompositeOperation = 'source-over';
+  <footer>
+    Inofficiell jämförelse utan koppling till Bolt eller Uber ·
+    Geokodning © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>-bidragsgivare · Rutter via OSRM
+  </footer>
 
-  ctx.save();
-  ctx.globalCompositeOperation = 'lighter';
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = 'high';
-  // draw twice, slightly offset, for a deeper glow
-  ctx.globalAlpha = 0.85;
-  ctx.drawImage(glow, 0, 0, RENDER_W, RENDER_H);
-  ctx.globalAlpha = 0.35;
-  ctx.drawImage(glow, -8, -10, RENDER_W + 16, RENDER_H + 20);
-  ctx.globalAlpha = 0.18;
-  ctx.drawImage(glow, -22, -26, RENDER_W + 44, RENDER_H + 52);
-  ctx.restore();
-}
-
-function drawStars(t) {
-  const p = t / LOOP;
-  ctx.save();
-  for (const s of stars) {
-    const tw = s.base * (0.55 + 0.45 * Math.sin(TAU * (s.k * p + s.phase)));
-    ctx.globalAlpha = tw;
-    ctx.fillStyle = '#dfe9ff';
-    ctx.beginPath();
-    ctx.arc(s.x * RENDER_W, s.y * RENDER_H, s.r, 0, TAU);
-    ctx.fill();
-  }
-  ctx.restore();
-}
-
-function drawRidge(ys, color) {
-  ctx.fillStyle = color;
-  ctx.beginPath();
-  ctx.moveTo(0, RENDER_H);
-  const n = ys.length - 1;
-  for (let i = 0; i <= n; i++) {
-    const x = (i / n) * RENDER_W;
-    const y = ys[i] * RENDER_H;
-    if (i === 0) ctx.lineTo(x, y);
-    else {
-      const px = ((i - 1) / n) * RENDER_W;
-      const py = ys[i - 1] * RENDER_H;
-      ctx.quadraticCurveTo(px + (x - px) / 2, (py + y) / 2, x, y);
-    }
-  }
-  ctx.lineTo(RENDER_W, RENDER_H);
-  ctx.closePath();
-  ctx.fill();
-}
-
-function drawMountains() {
-  drawRidge(ridgeFar, '#0a0a1c');
-  drawRidge(ridgeNear, '#050510');
-}
-
-// Faint reflected aurora light on the far ridge line.
-function drawGroundGlow(t) {
-  const p = t / LOOP;
-  const a = 0.05 + 0.03 * Math.sin(TAU * p);
-  const g = ctx.createLinearGradient(0, RENDER_H * 0.78, 0, RENDER_H);
-  g.addColorStop(0, `rgba(64,255,190,${a.toFixed(3)})`);
-  g.addColorStop(1, 'rgba(64,255,190,0)');
-  ctx.fillStyle = g;
-  ctx.fillRect(0, RENDER_H * 0.78, RENDER_W, RENDER_H * 0.22);
-}
-
-// Renders the complete frame for time t (seconds). Pure function of t.
-function renderFrame(t) {
-  drawSky();
-  drawStars(t);
-  drawAurora(t);
-  drawGroundGlow(t);
-  drawMountains();
-}
-
-// Exposed for the offline Playwright renderer.
-window.renderFrame = renderFrame;
-window.LOOP_SECONDS = LOOP;
-
-// Live preview when opened in a browser.
-if (!navigator.webdriver) {
-  const start = performance.now();
-  (function tick() {
-    renderFrame(((performance.now() - start) / 1000) % LOOP);
-    requestAnimationFrame(tick);
-  })();
-} else {
-  renderFrame(0);
-}
-</script>
+  <!-- async: en långsam/otillgänglig CDN får inte blockera appens egen kod. -->
+  <script id="leaflet-js" src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin="" async></script>
+  <script src="pricing.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>
