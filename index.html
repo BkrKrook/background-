@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Sören Mäter - trippmätare</title>
+<title>Sorenta 4.0 - trippmätare</title>
 <meta name="theme-color" content="#0b0f14">
-<meta name="description" content="Sören Mäter — exakt trippmätare som mäter hur många meter du rör dig, med filtrerad GPS-spårning.">
+<meta name="description" content="Sorenta 4.0 — exakt trippmätare som mäter hur många meter du rör dig, med filtrerad GPS-spårning.">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Sören Mäter">
+<meta name="apple-mobile-web-app-title" content="Sorenta 4.0">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
@@ -52,8 +52,20 @@
   .stat .v{font-size:19px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
   .stat .k{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);margin-top:3px}
 
-  #map{width:100%;height:150px;display:block;border-radius:14px;background:var(--card2);
-    border:1px solid var(--line);margin-top:10px}
+  .mapwrap{position:relative;margin-top:10px;border-radius:14px;overflow:hidden;
+    border:1px solid var(--line);background:var(--card2);height:190px;transition:height .2s}
+  .mapwrap.big{height:min(62vh,560px)}
+  #map{width:100%;height:100%;display:block;touch-action:none;cursor:grab}
+  #map:active{cursor:grabbing}
+  .mapctl{position:absolute;top:8px;right:8px;display:flex;flex-direction:column;gap:6px}
+  .mapctl button{width:36px;height:36px;padding:0;flex:none;border-radius:10px;font-size:18px;
+    font-weight:700;background:rgba(11,15,20,.72);border:1px solid rgba(143,163,186,.35);
+    color:var(--fg);backdrop-filter:blur(6px);line-height:1}
+  .mapctl button.off{color:var(--dim)}
+  .mapctl button.on{background:var(--accent);color:#04140e;border-color:transparent}
+  .attrib{position:absolute;right:8px;bottom:8px;font-size:10px;color:#cfe0f2;
+    background:rgba(11,15,20,.6);padding:3px 7px;border-radius:6px;text-decoration:none}
+  .attrib.hidden{display:none}
 
   .row{display:flex;gap:8px;margin-top:10px}
   button{font:inherit;font-weight:700;border:none;border-radius:16px;padding:17px 12px;
@@ -91,7 +103,7 @@
 <body>
 
 <header>
-  <h1>Sören Mäter<span>trippmätare</span></h1>
+  <h1>Sorenta 4.0<span>trippmätare</span></h1>
   <div class="chip"><span class="dot" id="dot"></span><span id="gpsTxt">Ej startad</span></div>
 </header>
 
@@ -110,7 +122,17 @@
   <div class="stat"><div class="v" id="acc">–</div><div class="k">noggrannhet</div></div>
 </div>
 
-<canvas id="map"></canvas>
+<div class="mapwrap" id="mapwrap">
+  <canvas id="map"></canvas>
+  <div class="mapctl">
+    <button id="zoomIn" aria-label="Zooma in">+</button>
+    <button id="zoomOut" aria-label="Zooma ut">−</button>
+    <button id="centerBtn" aria-label="Centrera på spåret">⌖</button>
+    <button id="bigBtn" aria-label="Förstora kartan">⤢</button>
+  </div>
+  <a class="attrib" id="attrib" href="https://www.openstreetmap.org/copyright"
+     target="_blank" rel="noopener">© OpenStreetMap-bidragsgivarna</a>
+</div>
 
 <div class="banner" id="banner"></div>
 
@@ -136,6 +158,13 @@
     <div class="field">
       <label>Räknas som rörelse över <b><span id="minMoveV">0,9</span> km/h</b></label>
       <input type="range" id="minMove" min="0.3" max="4" step="0.1" value="0.9">
+    </div>
+    <div class="field">
+      <label>Karta <b id="mapState">OpenStreetMap</b></label>
+      <div class="modes" style="grid-template-columns:repeat(2,1fr)">
+        <button data-tiles="1" id="tilesOn">OpenStreetMap</button>
+        <button data-tiles="0" id="tilesOff">Utan kartbild</button>
+      </div>
     </div>
     <div class="field">
       <label>Håll skärmen tänd <b id="wakeState">på</b></label>
@@ -257,19 +286,27 @@ const TUNE = {
 };
 
 /* ---------------- Sparning ---------------- */
-const KEY = 'soren-mater.v1';
+const KEY = 'sorenta.v1';
+const GAMLA_NYCKLAR = ['soren-mater.v1', 'trippmatare.v1'];   // flyttas över vid namnbyte
 function save() {
   try {
     localStorage.setItem(KEY, JSON.stringify({
       total:S.total, track:S.track.slice(-MAX_TRACK), elapsed:elapsedMs(), movingMs:S.movingMs,
       maxSpeed:S.maxSpeed, fixes:S.fixes, mode:S.mode, accGate:S.accGate,
-      minMove:S.minMove, wake:S.wake, saved:Date.now()
+      minMove:S.minMove, wake:S.wake, tiles:M.tiles, big:M.big, saved:Date.now()
     }));
   } catch (e) {}
 }
 function load() {
   try {
-    const d = JSON.parse(localStorage.getItem(KEY) || 'null');
+    let radata = localStorage.getItem(KEY);
+    if (!radata) {                       // första starten efter namnbytet
+      for (const gammal of GAMLA_NYCKLAR) {
+        const g = localStorage.getItem(gammal);
+        if (g) { radata = g; localStorage.setItem(KEY, g); localStorage.removeItem(gammal); break; }
+      }
+    }
+    const d = JSON.parse(radata || 'null');
     if (!d) return;
     S.total = d.total||0; S.track = d.track||[]; S.elapsed = d.elapsed||0;
     S.movingMs = d.movingMs||0; S.maxSpeed = d.maxSpeed||0; S.fixes = d.fixes||0;
@@ -277,6 +314,8 @@ function load() {
     if (typeof d.accGate === 'number') S.accGate = d.accGate;
     if (typeof d.minMove === 'number') S.minMove = d.minMove;
     if (typeof d.wake === 'boolean') S.wake = d.wake;
+    if (typeof d.tiles === 'boolean') M.tiles = d.tiles;
+    if (typeof d.big === 'boolean') M.big = d.big;
   } catch (e) {}
 }
 function elapsedMs() { return S.elapsed + (S.running ? Date.now() - S.runStart : 0); }
@@ -405,7 +444,7 @@ function onFix(pos) {
   if (haversine(S.anchor, point) > Math.max(2, 0.5 * sigma)) {
     S.anchor = point;
     S.track.push([point.lat, point.lng, tMs, acc]);
-    if (S.track.length > MAX_TRACK) S.track.splice(0, S.track.length - MAX_TRACK);
+    if (S.track.length > MAX_TRACK) glesaSpar();
     paint();
   }
 
@@ -456,6 +495,16 @@ function onFix(pos) {
 
   S.last = point;
   render();
+}
+
+/* Vid taket: halvera upplösningen på den äldsta halvan i stället för att kapa bort
+   början. Spåret täcker då hela turen, bara med grövre detalj längst bak — sträckan
+   påverkas inte alls, den räknas ur hastigheten och inte ur spårpunkterna.        */
+function glesaSpar() {
+  const halva = S.track.length >> 1;
+  const glesad = [];
+  for (let i = 0; i < halva; i += 2) glesad.push(S.track[i]);
+  S.track = glesad.concat(S.track.slice(halva));
 }
 
 function onErr(e) {
@@ -527,58 +576,342 @@ function render() {
   b.classList.toggle('stop', S.running);
 }
 
-/* Enkel spårkarta utan externa kartbilder: lat/lng → meter → canvas. */
+/* ================= Karta: OpenStreetMap-rutor + spåret =================
+   Egen ritning på canvas i stället för ett kartbibliotek: appen förblir en
+   enda fil utan beroenden, och när rutorna inte går att hämta (ingen täckning,
+   avstängd datatrafik) ritas spåret ändå på tom bakgrund.                    */
+const TILE = 256, MINZ = 2, MAXZ = 19, TILE_CACHE_MAX = 400;
+const FEL_VILA = 30000, FEL_VILA_MAX = 10 * 60000, FEL_TAK = 5, PAUS_VILA = 60000;
+
+const M = {
+  url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+  z: 16, lat: null, lng: null,   // kartcentrum
+  follow: true,                  // ram in hela spåret automatiskt
+  tiles: true,                   // hämta kartrutor alls
+  big: false,
+  cache: new Map(), pending: 0, fails: 0, broken: false, brokenT: 0, loaded: 0,
+  raf: 0
+};
+
+/* Web Mercator: lat/lng ⇄ världspixlar (TILE·2^z px runt hela jorden). */
+function project(lat, lng, z) {
+  const s = TILE * Math.pow(2, z);
+  const sy = Math.max(-0.9999, Math.min(0.9999, Math.sin(lat * Math.PI / 180)));
+  return [ (lng + 180) / 360 * s,
+           (0.5 - Math.log((1 + sy) / (1 - sy)) / (4 * Math.PI)) * s ];
+}
+function unproject(x, y, z) {
+  const s = TILE * Math.pow(2, z);
+  const n = Math.PI - 2 * Math.PI * y / s;
+  return [ 180 / Math.PI * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n))),
+           x / s * 360 - 180 ];
+}
+const mPerPx = (lat, z) => 156543.03392 * Math.cos(lat * Math.PI / 180) / Math.pow(2, z);
+
+function schedulePaint() {
+  if (!M.raf) M.raf = requestAnimationFrame(() => { M.raf = 0; paint(); });
+}
+
+/* Ram in hela spåret: största zoom där hela banan får plats. */
+function fitTrack(w, h) {
+  const t = S.track;
+  if (!t.length) return;
+  let minLat = 90, maxLat = -90, minLng = 180, maxLng = -180;
+  for (const p of t) {
+    if (p[0] < minLat) minLat = p[0];
+    if (p[0] > maxLat) maxLat = p[0];
+    if (p[1] < minLng) minLng = p[1];
+    if (p[1] > maxLng) maxLng = p[1];
+  }
+  M.lat = (minLat + maxLat) / 2;
+  M.lng = (minLng + maxLng) / 2;
+  const pad = 30;
+  let z = 17;                                   // aldrig närmare än så
+  for (; z > MINZ; z--) {
+    const a = project(maxLat, minLng, z), b = project(minLat, maxLng, z);
+    if (Math.abs(b[0] - a[0]) <= Math.max(1, w - 2*pad) &&
+        Math.abs(b[1] - a[1]) <= Math.max(1, h - 2*pad)) break;
+  }
+  M.z = z;
+}
+
+function tileUrl(z, x, y) {
+  return M.url.replace('{z}', z).replace('{x}', x).replace('{y}', y);
+}
+
+/* Hämtar en ruta ur cachen och startar nedladdning vid behov.
+   En ruta som misslyckats får INTE begäras om direkt: posten ligger kvar med en
+   tidsstämpel och rutan vilar (30 s, sedan dubbelt så länge för varje nytt fel).
+   Utan den vilan skulle en tappad täckning ge en självgående anropsstorm mot
+   OSM:s servrar — varje omritning skulle begära samma trasiga rutor på nytt.   */
+function getTile(z, x, y) {
+  const n = Math.pow(2, z);
+  if (y < 0 || y >= n) return null;
+  x = ((x % n) + n) % n;
+  const key = z + '/' + x + '/' + y;
+  const post = M.cache.get(key);
+  if (post) {
+    if (post.ok) return post.img;
+    if (!post.fel) return null;                       // hämtning pågår
+    const vila = Math.min(FEL_VILA_MAX, FEL_VILA * Math.pow(2, post.forsok - 1));
+    if (Date.now() - post.fel < vila) return null;    // vilar efter tidigare fel
+  }
+  if (M.broken || M.pending > 10) return null;
+
+  const rec = post || {ok: false, forsok: 0};
+  rec.fel = 0;
+  M.cache.delete(key); M.cache.set(key, rec);         // nyast sist i cachen
+  for (const gammalNyckel of M.cache.keys()) {
+    if (M.cache.size <= TILE_CACHE_MAX) break;
+    if (gammalNyckel !== key) M.cache.delete(gammalNyckel);
+  }
+  M.pending++;
+  const img = new Image();
+  rec.img = img;
+  img.crossOrigin = 'anonymous';        // OSM skickar CORS-huvud; håller canvasen ren
+  img.onload = () => {
+    rec.ok = true; rec.forsok = 0; rec.fel = 0;
+    M.pending--; M.fails = 0; M.loaded++;
+    schedulePaint();
+  };
+  img.onerror = () => {
+    M.pending--; rec.fel = Date.now(); rec.forsok++;
+    // Räknas oavsett hur många rutor som lyckats tidigare: täckningen kan
+    // försvinna mitt i en mätning, och då ska kartan ge upp och släppa nätet.
+    if (++M.fails >= FEL_TAK) { M.broken = true; M.brokenT = Date.now(); }
+    // Ingen omritning här — den skulle begära samma trasiga ruta på nytt.
+  };
+  img.src = tileUrl(z, x, y);
+  return null;
+}
+
+/* Uppskalad förälderruta medan den skarpa laddas — kartan blinkar inte tom. */
+function parentTile(z, x, y) {
+  for (let up = 1; up <= 4; up++) {
+    const pz = z - up;
+    if (pz < 0) return null;
+    const f = Math.pow(2, up), n = Math.pow(2, pz);
+    let px = Math.floor(x / f);
+    const py = Math.floor(y / f);
+    if (py < 0 || py >= n) continue;
+    px = ((px % n) + n) % n;
+    const rec = M.cache.get(pz + '/' + px + '/' + py);
+    if (rec && rec.ok) {
+      const sub = TILE / f;
+      return {img: rec.img, sx: (x - px * f) * sub, sy: (y - py * f) * sub, size: sub};
+    }
+  }
+  return null;
+}
+
+/* Ska kartrutor ritas just nu? Släpper samtidigt nödbromsen när den vilat klart —
+   täckningen kan ha kommit tillbaka sedan sist. */
+function rutorPa() {
+  if (!M.tiles) return false;
+  if (M.broken && Date.now() - M.brokenT >= PAUS_VILA) { M.broken = false; M.fails = 0; }
+  return !M.broken;
+}
+
 function paint() {
   const cv = $('map'), dpr = Math.min(2, window.devicePixelRatio || 1);
   const w = cv.clientWidth, h = cv.clientHeight;
-  if (cv.width !== w*dpr || cv.height !== h*dpr) { cv.width = w*dpr; cv.height = h*dpr; }
+  if (!w || !h) return;
+  if (cv.width !== Math.round(w*dpr) || cv.height !== Math.round(h*dpr)) {
+    cv.width = Math.round(w*dpr); cv.height = Math.round(h*dpr);
+  }
   const g = cv.getContext('2d');
-  g.setTransform(dpr,0,0,dpr,0,0);
-  g.clearRect(0,0,w,h);
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.fillStyle = '#1b2531'; g.fillRect(0, 0, w, h);
+
   const t = S.track;
-  if (t.length < 2) {
-    g.fillStyle = '#5d708a'; g.font = '13px system-ui';
-    g.textAlign = 'center';
-    g.fillText(S.running ? 'Väntar på rörelse…' : 'Spåret ritas här', w/2, h/2);
+  if (M.follow && t.length) fitTrack(w, h);
+  const visaRutor = rutorPa();
+  $('attrib').classList.toggle('hidden', !visaRutor);
+
+  if (M.lat == null) {
+    g.fillStyle = '#5d708a'; g.font = '13px system-ui'; g.textAlign = 'center';
+    g.fillText(S.running ? 'Väntar på position…' : 'Kartan visas när du startat', w/2, h/2);
     return;
   }
-  const lat0 = t[0][0] * Math.PI/180;
-  const pts = t.map(p => [ (p[1]-t[0][1]) * Math.PI/180 * R * Math.cos(lat0),
-                          -(p[0]-t[0][0]) * Math.PI/180 * R ]);
-  let minX=1e18,maxX=-1e18,minY=1e18,maxY=-1e18;
-  for (const [x,y] of pts) { if(x<minX)minX=x; if(x>maxX)maxX=x; if(y<minY)minY=y; if(y>maxY)maxY=y; }
-  const pad = 16;
-  const sx = (w-2*pad) / Math.max(1, maxX-minX), sy = (h-2*pad) / Math.max(1, maxY-minY);
-  const s = Math.min(sx, sy);
-  const ox = pad + ((w-2*pad) - (maxX-minX)*s)/2, oy = pad + ((h-2*pad) - (maxY-minY)*s)/2;
-  const X = x => ox + (x-minX)*s, Y = y => oy + (y-minY)*s;
 
-  g.lineWidth = 3; g.lineJoin = 'round'; g.lineCap = 'round';
-  g.strokeStyle = 'rgba(46,230,168,.85)';
-  g.beginPath(); g.moveTo(X(pts[0][0]), Y(pts[0][1]));
-  for (let i=1;i<pts.length;i++) g.lineTo(X(pts[i][0]), Y(pts[i][1]));
-  g.stroke();
-  // start & nuvarande position
-  g.fillStyle = '#8fa3ba'; g.beginPath();
-  g.arc(X(pts[0][0]), Y(pts[0][1]), 4, 0, 7); g.fill();
-  const last = pts[pts.length-1];
-  g.fillStyle = '#2ee6a8'; g.beginPath(); g.arc(X(last[0]), Y(last[1]), 6, 0, 7); g.fill();
-  g.strokeStyle = 'rgba(46,230,168,.3)'; g.lineWidth = 8;
-  g.beginPath(); g.arc(X(last[0]), Y(last[1]), 10, 0, 7); g.stroke();
-  // skalstreck
-  const nice = [1,2,5,10,20,50,100,200,500,1000,2000,5000].find(v => v*s > 40) || 10000;
-  g.strokeStyle = '#3a4c63'; g.lineWidth = 2;
-  g.beginPath(); g.moveTo(10, h-12); g.lineTo(10 + nice*s, h-12); g.stroke();
-  g.fillStyle = '#5d708a'; g.font = '11px system-ui'; g.textAlign = 'left';
-  g.fillText(nice >= 1000 ? (nice/1000)+' km' : nice + ' m', 12, h-18);
+  const z = M.z, c = project(M.lat, M.lng, z);
+  const X = wx => w/2 + (wx - c[0]);
+  const Y = wy => h/2 + (wy - c[1]);
+
+  // --- kartrutor ---
+  if (visaRutor) {
+    const zi = Math.max(0, Math.min(MAXZ, Math.round(z)));
+    const scale = Math.pow(2, z - zi), ts = TILE * scale;
+    const ci = [c[0] * Math.pow(2, zi - z), c[1] * Math.pow(2, zi - z)];
+    const x0 = Math.floor((ci[0] - w/2/scale) / TILE), x1 = Math.floor((ci[0] + w/2/scale) / TILE);
+    const y0 = Math.floor((ci[1] - h/2/scale) / TILE), y1 = Math.floor((ci[1] + h/2/scale) / TILE);
+    for (let ty = y0; ty <= y1; ty++) for (let tx = x0; tx <= x1; tx++) {
+      const sx = w/2 + (tx*TILE - ci[0]) * scale, sy = h/2 + (ty*TILE - ci[1]) * scale;
+      const img = getTile(zi, tx, ty);
+      if (img) { g.drawImage(img, sx, sy, ts + 1, ts + 1); continue; }
+      const p = parentTile(zi, tx, ty);
+      if (p) g.drawImage(p.img, p.sx, p.sy, p.size, p.size, sx, sy, ts + 1, ts + 1);
+    }
+    g.fillStyle = 'rgba(11,15,20,.20)'; g.fillRect(0, 0, w, h);   // dämpning: spåret ska synas
+  }
+
+  // --- spåret ---
+  if (t.length > 1) {
+    const path = new Path2D();
+    for (let i = 0; i < t.length; i++) {
+      const p = project(t[i][0], t[i][1], z);
+      const x = X(p[0]), y = Y(p[1]);
+      if (i) path.lineTo(x, y); else path.moveTo(x, y);
+    }
+    g.lineJoin = 'round'; g.lineCap = 'round';
+    g.strokeStyle = 'rgba(4,16,12,.6)'; g.lineWidth = 7; g.stroke(path);
+    g.strokeStyle = '#2ee6a8'; g.lineWidth = 3.5; g.stroke(path);
+  }
+
+  if (t.length) {
+    const s0 = project(t[0][0], t[0][1], z);
+    g.fillStyle = '#0b0f14'; g.strokeStyle = '#8fa3ba'; g.lineWidth = 2.5;
+    g.beginPath(); g.arc(X(s0[0]), Y(s0[1]), 5, 0, 7); g.fill(); g.stroke();
+
+    const l = t[t.length-1], lp = project(l[0], l[1], z);
+    const lx = X(lp[0]), ly = Y(lp[1]);
+    if (S.lastAcc) {                                   // noggrannhetscirkel
+      const r = S.lastAcc / mPerPx(l[0], z);
+      if (r > 6 && r < 400) {
+        g.fillStyle = 'rgba(46,230,168,.10)'; g.strokeStyle = 'rgba(46,230,168,.35)';
+        g.lineWidth = 1;
+        g.beginPath(); g.arc(lx, ly, r, 0, 7); g.fill(); g.stroke();
+      }
+    }
+    g.fillStyle = '#2ee6a8'; g.strokeStyle = 'rgba(4,16,12,.7)'; g.lineWidth = 2;
+    g.beginPath(); g.arc(lx, ly, 6.5, 0, 7); g.fill(); g.stroke();
+  }
+
+  // --- skalstreck ---
+  const mpp = mPerPx(M.lat, z);
+  const nice = [1,2,5,10,20,50,100,200,500,1000,2000,5000,10000].find(v => v/mpp > 44) || 20000;
+  const px = nice / mpp;
+  g.strokeStyle = 'rgba(234,242,251,.75)'; g.lineWidth = 2;
+  g.beginPath(); g.moveTo(12, h-14); g.lineTo(12 + px, h-14);
+  g.moveTo(12, h-18); g.lineTo(12, h-10); g.moveTo(12+px, h-18); g.lineTo(12+px, h-10); g.stroke();
+  g.fillStyle = 'rgba(234,242,251,.85)'; g.font = '11px system-ui'; g.textAlign = 'left';
+  g.fillText(nice >= 1000 ? (nice/1000) + ' km' : nice + ' m', 14, h-20);
+
+  if (M.tiles && M.broken) {
+    g.fillStyle = '#5d708a'; g.font = '11px system-ui'; g.textAlign = 'right';
+    g.fillText('kartrutor kunde inte hämtas', w-10, 16);
+  }
 }
+
+/* ---------------- Kartinteraktion: dra, nyp, dubbeltryck ---------------- */
+function screenToLatLng(sx, sy) {
+  const cv = $('map'), c = project(M.lat, M.lng, M.z);
+  return unproject(c[0] + sx - cv.clientWidth/2, c[1] + sy - cv.clientHeight/2, M.z);
+}
+function panBy(dx, dy) {
+  if (M.lat == null) return;
+  const c = project(M.lat, M.lng, M.z);
+  const ll = unproject(c[0] + dx, c[1] + dy, M.z);
+  M.lat = Math.max(-85, Math.min(85, ll[0])); M.lng = ll[1];
+  setFollow(false); schedulePaint();
+}
+function zoomAround(sx, sy, dz) {
+  if (M.lat == null) return;
+  const cv = $('map'), w = cv.clientWidth, h = cv.clientHeight;
+  const z0 = M.z, z1 = Math.max(MINZ, Math.min(MAXZ, z0 + dz));
+  if (z1 === z0) return;
+  // Räkna i världspixlar rakt igenom: punkten under fingret ska ligga kvar exakt,
+  // så en projektion fram och tillbaka per zoomsteg räcker (ingen drift).
+  const ox = sx - w/2, oy = sy - h/2;
+  const c0 = project(M.lat, M.lng, z0);
+  const f = Math.pow(2, z1 - z0);
+  const cx = (c0[0] + ox) * f - ox, cy = (c0[1] + oy) * f - oy;
+  const ll = unproject(cx, cy, z1);
+  M.z = z1;
+  M.lat = Math.max(-85, Math.min(85, ll[0]));
+  M.lng = ll[1];
+  setFollow(false); schedulePaint();
+}
+
+function setFollow(on) {
+  M.follow = on;
+  $('centerBtn').classList.toggle('on', on);
+  if (on) schedulePaint();
+}
+
+(function kartInput() {
+  const cv = $('map'), wrap = $('mapwrap');
+  const pekare = new Map();
+  let nyp = null;
+  /* mittpunkt och avstånd mellan de två första fingrarna */
+  const mid = () => {
+    const v = [...pekare.values()].slice(0, 2);
+    if (v.length < 2) return null;
+    return [(v[0][0]+v[1][0])/2, (v[0][1]+v[1][1])/2,
+            Math.hypot(v[0][0]-v[1][0], v[0][1]-v[1][1])];
+  };
+  wrap.addEventListener('pointerdown', e => {
+    // Första fingret på en knapp ska trycka knappen; ett andra finger som råkar
+    // landa där ska ändå räknas till nypet.
+    if (!pekare.size && e.target.closest('.mapctl, .attrib')) return;
+    try { cv.setPointerCapture(e.pointerId); } catch (err) {}   // vissa webbläsare nekar
+    pekare.set(e.pointerId, [e.clientX, e.clientY]);
+    nyp = mid();                       // referensen räknas om vid varje ändring
+  });
+  wrap.addEventListener('pointermove', e => {
+    if (!pekare.has(e.pointerId)) return;
+    const f = pekare.get(e.pointerId);
+    pekare.set(e.pointerId, [e.clientX, e.clientY]);
+    if (pekare.size === 1) {
+      panBy(f[0] - e.clientX, f[1] - e.clientY);
+      return;
+    }
+    const nu = mid();
+    if (!nu || !nyp) { nyp = nu; return; }
+    const r = cv.getBoundingClientRect();
+    // Zoomen ankras i den GAMLA mittpunkten — där fingrarna låg när avståndet
+    // mättes. Ankras den i den nya glider kartan undan lite för varje händelse.
+    if (nyp[2] > 0 && nu[2] > 0) zoomAround(nyp[0]-r.left, nyp[1]-r.top, Math.log2(nu[2]/nyp[2]));
+    panBy(nyp[0] - nu[0], nyp[1] - nu[1]);
+    nyp = nu;
+  });
+  const slapp = e => {
+    if (!pekare.delete(e.pointerId)) return;
+    nyp = mid();                       // t.ex. ett finger lyft ur ett tregrepp
+  };
+  wrap.addEventListener('pointerup', slapp);
+  wrap.addEventListener('pointercancel', slapp);
+  cv.addEventListener('wheel', e => {
+    e.preventDefault();
+    const r = cv.getBoundingClientRect();
+    zoomAround(e.clientX - r.left, e.clientY - r.top, -e.deltaY / 350);
+  }, {passive: false});
+  cv.addEventListener('dblclick', e => {
+    const r = cv.getBoundingClientRect();
+    zoomAround(e.clientX - r.left, e.clientY - r.top, 1);
+  });
+  const mitten = dz => () => zoomAround(cv.clientWidth/2, cv.clientHeight/2, dz);
+  $('zoomIn').onclick = mitten(1);
+  $('zoomOut').onclick = mitten(-1);
+  $('centerBtn').onclick = () => setFollow(true);
+  $('bigBtn').onclick = () => {
+    M.big = !M.big;
+    wrap.classList.toggle('big', M.big);
+    save();
+  };
+  // Kartytan ändrar storlek av fler skäl än knappen: CSS-övergången när den växer,
+  // skärmrotation, adressfältet som fälls in. Rita om när den faktiskt bytt storlek,
+  // annars blir canvasens bitmapp kvar i fel höjd.
+  if (window.ResizeObserver) new ResizeObserver(() => schedulePaint()).observe(wrap);
+  else window.addEventListener('resize', schedulePaint);
+})();
 
 /* ---------------- Export ---------------- */
 function gpx() {
   const iso = ms => new Date(ms).toISOString();
   const head = '<?xml version="1.0" encoding="UTF-8"?>\n' +
-    '<gpx version="1.1" creator="Sören Mäter" xmlns="http://www.topografix.com/GPX/1/1">\n' +
-    '<trk><name>Sören Mäter ' + iso(S.track.length ? S.track[0][2] : Date.now()).slice(0,16).replace('T',' ') +
+    '<gpx version="1.1" creator="Sorenta 4.0" xmlns="http://www.topografix.com/GPX/1/1">\n' +
+    '<trk><name>Sorenta 4.0 ' + iso(S.track.length ? S.track[0][2] : Date.now()).slice(0,16).replace('T',' ') +
     '</name><trkseg>\n';
   const body = S.track.map(p =>
     '<trkpt lat="' + p[0].toFixed(7) + '" lon="' + p[1].toFixed(7) + '">' +
@@ -590,7 +923,7 @@ function download() {
   const blob = new Blob([gpx()], {type:'application/gpx+xml'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url; a.download = 'soren-mater-' + new Date().toISOString().slice(0,16).replace(/[:T]/g,'-') + '.gpx';
+  a.href = url; a.download = 'sorenta-' + new Date().toISOString().slice(0,16).replace(/[:T]/g,'-') + '.gpx';
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 4000);
   toast('GPX-fil sparad (' + S.track.length + ' punkter)');
@@ -614,7 +947,7 @@ $('resetBtn').onclick = () => {
   S.elapsed = 0; S.runStart = Date.now(); S.movingMs = 0;
   S.speed = 0; S.maxSpeed = 0; S.fixes = 0; S.rejected = 0;
   S.rejAccRun = 0; S.rejSpeedRun = 0;
-  S.kalman.reset(); save(); buzz(40); render(); paint(); toast('Nollställd');
+  S.kalman.reset(); setFollow(true); save(); buzz(40); render(); paint(); toast('Nollställd');
 };
 $('exportBtn').onclick = download;
 
@@ -635,6 +968,16 @@ function setMode(k) {
 }
 $('accGate').oninput = e => { S.accGate = +e.target.value; $('accGateV').textContent = S.accGate; save(); };
 $('minMove').oninput = e => { S.minMove = +e.target.value; $('minMoveV').textContent = nf(S.minMove,1); save(); };
+$('tilesOn').onclick = () => setTiles(true);
+$('tilesOff').onclick = () => setTiles(false);
+function setTiles(on) {
+  M.tiles = on;
+  M.broken = false; M.fails = 0; M.brokenT = 0;   // nytt försök när man slår på igen
+  $('mapState').textContent = on ? 'OpenStreetMap' : 'Utan kartbild';
+  $('tilesOn').classList.toggle('on', on);
+  $('tilesOff').classList.toggle('on', !on);
+  save(); schedulePaint();
+}
 $('wakeOn').onclick = () => setWake(true);
 $('wakeOff').onclick = () => setWake(false);
 function setWake(on) {
@@ -645,7 +988,10 @@ function setWake(on) {
 }
 
 /* Felsökningshandtag (används av testet, ofarligt i drift). */
-window.__tripp = {S:S, MODES:MODES, TUNE:TUNE, haversine:haversine, setMode:function(k){setMode(k);}};
+window.__tripp = {S:S, M:M, MODES:MODES, TUNE:TUNE, haversine:haversine,
+  project:project, unproject:unproject, mPerPx:mPerPx,
+  setMode:function(k){setMode(k);}, setTiles:function(v){setTiles(v);},
+  setFollow:function(v){setFollow(v);}, paint:function(){paint();}};
 
 /* ---------------- Start ---------------- */
 load();
@@ -665,8 +1011,18 @@ try {
 $('accGate').value = S.accGate; $('accGateV').textContent = S.accGate;
 $('minMove').value = S.minMove; $('minMoveV').textContent = nf(S.minMove,1);
 setWake(S.wake);
+setTiles(M.tiles);
+setFollow(true);
+$('mapwrap').classList.toggle('big', M.big);
 render(); paint();
-setInterval(() => { render(); if (S.running) save(); }, 500);
+let sistaSpar = 0;
+setInterval(() => {
+  render();
+  if (!S.running) return;
+  schedulePaint();                       // håller kartan och markören färska
+  const nu = Date.now();
+  if (nu - sistaSpar >= 2000) { sistaSpar = nu; save(); }   // hela spåret är tungt
+}, 500);
 window.addEventListener('resize', paint);
 window.addEventListener('pagehide', save);
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {

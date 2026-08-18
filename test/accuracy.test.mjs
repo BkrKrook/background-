@@ -1,4 +1,4 @@
-/* Kör Sören Mäter i en riktig webbläsare mot simulerade banor med känd längd och
+/* Kör Sorenta 4.0 i en riktig webbläsare mot simulerade banor med känd längd och
    verifierar både mätnoggrannheten och gränssnittsflödena.
    Avslutar med kod 1 om något kontrollvärde faller utanför sin tolerans.
 
@@ -83,6 +83,8 @@ const ctx = await browser.newContext({
   permissions: ['geolocation'], geolocation: {latitude: LAT0, longitude: LNG0, accuracy: 5},
   viewport: {width: 390, height: 844}, deviceScaleFactor: 2,
   isMobile: true, hasTouch: true, acceptDownloads: true});
+// Mätsviten testar inte kartan: inga anrop ska gå till OSM:s servrar härifrån.
+await ctx.route(/openstreetmap\.org/, route => route.abort());
 const konsolfel = [];
 
 async function newPage() {
@@ -101,6 +103,7 @@ async function newPage() {
   await page.goto('http://localhost:8099/', {waitUntil: 'load'});
   await page.evaluate(() => localStorage.clear());
   await page.reload({waitUntil: 'load'});
+  await page.evaluate(() => window.__tripp.setTiles(false));   // kartan testas separat
   await page.click('#startBtn');
   await page.evaluate(() => { const S = window.__tripp.S;      // ren utgångspunkt
     S.total = 0; S.track = []; S.buf = []; S.origin = null; S.last = null; S.anchor = null;
@@ -197,11 +200,12 @@ console.log('\n== Gränssnitt ==');
   await page.goto('http://localhost:8099/', {waitUntil: 'load'});
   await page.evaluate(() => localStorage.clear());
   await page.reload({waitUntil: 'load'});
-  check('titel', (await page.title()) === 'Sören Mäter - trippmätare', await page.title());
+  await page.evaluate(() => window.__tripp.setTiles(false));
+  check('titel', (await page.title()) === 'Sorenta 4.0 - trippmätare', await page.title());
   const mf = await page.evaluate(async () => { const r = await fetch('manifest.webmanifest');
     const j = await r.json(); return {status: r.status, name: j.name, short: j.short_name}; });
-  check('manifest', mf.status === 200 && mf.name === 'Sören Mäter - trippmätare' &&
-        mf.short === 'Sören Mäter', mf.name + ' / ' + mf.short);
+  check('manifest', mf.status === 200 && mf.name === 'Sorenta 4.0 - trippmätare' &&
+        mf.short === 'Sorenta 4.0', mf.name + ' / ' + mf.short);
   const ikoner = await page.evaluate(async () => { const o = {};
     for (const f of ['icon.svg','icon-180.png','icon-192.png','icon-512.png','sw.js'])
       o[f] = (await fetch(f)).status; return o; });
@@ -228,9 +232,9 @@ console.log('\n== Gränssnitt ==');
   if (d) {
     const gpx = fs.readFileSync(await d.path(), 'utf8');
     check('GPX-export', gpx.startsWith('<?xml') && gpx.includes('</gpx>') &&
-          gpx.includes('creator="Sören Mäter"') && /<trkpt/.test(gpx),
+          gpx.includes('creator="Sorenta 4.0"') && /<trkpt/.test(gpx),
           d.suggestedFilename() + ', ' + (gpx.match(/<trkpt/g)||[]).length + ' punkter');
-    check('GPX-filnamn', d.suggestedFilename().startsWith('soren-mater-'), d.suggestedFilename());
+    check('GPX-filnamn', d.suggestedFilename().startsWith('sorenta-'), d.suggestedFilename());
   } else check('GPX-export', false, 'ingen nedladdning');
 
   const fore = await page.evaluate(() => window.__tripp.S.total);

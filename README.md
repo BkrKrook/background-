@@ -1,10 +1,14 @@
-# Sören Mäter - trippmätare
+# Sorenta 4.0 - trippmätare
 
 En trippmätare för telefonen: den räknar **hur många meter du rör dig**, så exakt
 som telefonens GPS tillåter. En enda HTML-fil, inget konto, inget nät efter första
 laddningen, inga externa bibliotek.
 
-![Sören Mäter i drift](skarmdump.png)
+![Sorenta 4.0 i drift](skarmdump.png)
+
+*Skärmdumpen genereras av `npm run skarmdump`. Kartrutorna i bilden ritas lokalt av
+skriptet — byggmiljön har ingen åtkomst till OpenStreetMaps servrar, och en testsvit
+ska inte belasta dem. På telefonen visas den riktiga OSM-kartan.*
 
 ## Använd den
 
@@ -15,7 +19,7 @@ laddningen, inga externa bibliotek.
    låser på satelliter). Sedan är varje meter du går med i sträckan.
 
 Lägg gärna till sidan på hemskärmen (*Dela → Lägg till på hemskärmen*). Då startar
-den i helskärm utan flikar, heter **Sören Mäter** under ikonen, och fungerar offline.
+den i helskärm utan flikar, heter **Sorenta 4.0** under ikonen, och fungerar offline.
 
 **Skärmen måste vara tänd.** Mobila webbläsare stoppar GPS-uppdateringar när
 skärmen släcks — appen håller därför skärmen tänd åt dig (kan stängas av i
@@ -27,7 +31,7 @@ Att bara summera avstånden mellan GPS-punkter ger kraftigt uppblåsta värden: 
 brus är tidskorrelerat, så positionen vandrar flera meter fram och tillbaka även när
 du står helt still. Testsviten mäter den naiva metoden som jämförelse — den samlar på
 sig **932 m på tre minuter stillastående**, och gör en promenad på 280 m till 1 064 m.
-Sören Mäter gör i stället så här:
+Sorenta 4.0 gör i stället så här:
 
 1. **Noggrannhetsgrind** — fix sämre än gränsen (25 m som standard) kastas helt.
 2. **Kalman-filter** på positionen, med processbrus anpassat efter rörelsetyp.
@@ -54,10 +58,15 @@ Sören Mäter gör i stället så här:
    förflyttningen i stället, men bara om den är större än mätbruset, och sträcka och
    tid bokförs mot samma intervall så att snitthastigheten inte blåses upp.
 
+Spåret som ritas och exporteras rymmer 8 000 punkter. På riktigt långa turer gallras den
+äldsta halvan (varannan punkt behålls) i stället för att början kapas bort, så spåret
+alltid täcker hela turen — grövre längst bak, men helt. Sträckan påverkas inte alls av
+gallringen, den räknas ur hastigheten och inte ur spårpunkterna.
+
 ### Uppmätt noggrannhet
 
-`npm test` kör appen i en riktig webbläsare mot simulerade banor med känd längd
-(σ = 5 m positionsbrus, korrelation 0,6, 1 Hz, dopplerbrus 0,3 m/s):
+`npm run test:matning` kör appen i en riktig webbläsare mot simulerade banor med känd
+längd (σ = 5 m positionsbrus, korrelation 0,6, 1 Hz, dopplerbrus 0,3 m/s):
 
 | Scenario | Sant | Mätt | Fel | Naivt |
 |---|---|---|---|---|
@@ -95,6 +104,41 @@ Verkligheten är stökigare än simuleringen: bland höga hus studsar signalen
 (flervägsutbredning) och noggrannheten faller. Statusraden visar alltid vad GPS:en
 själv rapporterar, så du ser när mätningen är att lita på.
 
+## Kartan
+
+Spåret ritas ovanpå kartbilder (rutor) från **OpenStreetMap**, så du ser var du gått och
+hur långt det blev — inte bara en linje i tomma intet.
+
+- **Följer automatiskt.** Kartan ramar in hela spåret och zoomar ut när det växer.
+  Drar eller zoomar du själv släpper följningen; ⌖-knappen slår på den igen (knappen
+  lyser när följningen är aktiv).
+- **Dra, nyp och dubbeltryck** fungerar som i vilken karta som helst. ⤢ förstorar kartan
+  till halva skärmen.
+- **Noggrannhetscirkeln** runt din position visar hur säker GPS:en är just nu.
+- **Skalstreck** nere till vänster, så du kan bedöma avstånd direkt i bilden.
+
+Kartan är ritad direkt på en canvas i stället för med ett kartbibliotek: appen förblir
+en enda fil utan beroenden, och den fungerar likadant när rutorna inte går att hämta.
+
+**Datatrafik och offline.** Varje ruta är ungefär 15–30 kB. Service workern sparar de
+rutor du redan sett i en egen cache (max 500 stycken), så kartan finns kvar över områden
+du passerat även när täckningen tar slut — GPS:en i sig behöver inget nät. Vill du inte
+lägga mobildata på kartbilder alls väljer du **Utan kartbild** under Inställningar; då
+ritas spåret på tom bakgrund och mätningen påverkas inte alls.
+
+**När rutorna inte går att hämta** — tunnel, tappad täckning, blockerat nät — vilar varje
+misslyckad ruta innan den försöks igen (30 s, sedan dubbelt så länge för varje nytt fel),
+och efter fem fel i rad slutar appen begära rutor helt och skriver *kartrutor kunde inte
+hämtas* i kartans hörn. En minut senare provar den igen, så kartan kommer tillbaka av sig
+själv när täckningen gör det. Utan den vilan skulle varje omritning begära samma trasiga
+ruta på nytt — hundratals anrop i sekunden mot OSM:s servrar, rakt in i deras spärrar och
+rakt ur telefonens batteri. Testsviten mäter just det: högst 40 anrop under tre sekunder
+utan nät.
+
+Kartdata © OpenStreetMap-bidragsgivarna, tillgängligt under
+[Open Database License](https://www.openstreetmap.org/copyright). Attributionen visas med
+den formuleringen i kartans hörn så länge kartbilder ritas, vilket OSM:s villkor kräver.
+
 ## Inställningar
 
 | Inställning | Vad den gör |
@@ -102,6 +146,7 @@ själv rapporterar, så du ser när mätningen är att lita på.
 | **Rörelsetyp** | Sätter filterstyrka och rimlighetsspärr. *Rå* stänger av Kalman-filtret helt. |
 | **Kräv noggrannhet bättre än** | Fix med sämre rapporterad noggrannhet kastas. Lägre = strängare, men riskerar att kasta allt i skog och stadskärna. |
 | **Räknas som rörelse över** | Dödband: fart under detta räknas som stillastående. Höj om mätaren kryper när du står still. (I regressionsläget gäller alltid minst 1,8 km/h, eftersom skattningen därifrån är brusigare.) |
+| **Karta** | *OpenStreetMap* ritar kartbild under spåret. *Utan kartbild* hoppar över rutorna helt — sparar mobildata, mätningen är densamma. |
 | **Håll skärmen tänd** | Wake Lock, så att GPS:en fortsätter leverera fix. |
 
 Sträcka, spår och inställningar sparas löpande i `localStorage` — laddar sidan om
@@ -125,13 +170,21 @@ Lokalt: `npm run serve` och öppna `http://localhost:3000/` (GPS fungerar på
 | Fil | Innehåll |
 |---|---|
 | `index.html` | Hela appen — gränssnitt, filter, mätmotor, karta, GPX-export |
-| `sw.js` | Service worker: cachar appen så den fungerar offline |
+| `sw.js` | Service worker: cachar appen och sedda kartrutor för offline-bruk |
 | `manifest.webmanifest`, `icon*.png`, `icon.svg` | Hemskärmsikon och app-läge |
-| `test/accuracy.test.mjs` | Kör appen i Chromium mot simulerade banor och mäter felet |
+| `test/accuracy.test.mjs` | Mätnoggrannhet och gränssnittsflöden mot simulerade banor |
+| `test/karta.test.mjs` | Projektion, rutladdning, dra/nyp/zooma och reservläget utan nät |
+| `test/skarmdump.mjs` | Genererar README-bilden |
 
 ## Kör testerna
 
 ```bash
 npm install
-npm test        # sätt CHROMIUM=/sökväg/till/chrome om webbläsaren inte hittas
+npm test              # båda sviterna: 38 mätkontroller + 37 kartkontroller
+npm run test:matning  # bara mätnoggrannheten
+npm run test:karta    # bara kartan
+npm run skarmdump     # uppdaterar README-bilden
 ```
+
+Sätt `CHROMIUM=/sökväg/till/chrome` om webbläsaren inte hittas. Testerna avslutar med
+felkod om något faller, och de anropar aldrig OpenStreetMaps riktiga servrar.
