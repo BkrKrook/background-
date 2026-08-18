@@ -231,6 +231,7 @@ const S = {
   buf:[],                  // {t,n,e} senaste ~35 s i lokala meter (regression + stillhetsveto)
   origin:null,             // nollpunkt för det lokala metersystemet
   anchor:null, last:null,  // fästpunkt för spårpunkter resp. senaste accepterade fix
+  lastRaw:null,            // senaste accepterade RÅ position (rimlighetsspärren)
   elapsed:0, runStart:0,   // total tid (ms)
   movingMs:0,
   speed:0, maxSpeed:0, still:true, src:'–', ema:null,
@@ -250,6 +251,7 @@ const TUNE = {
   warmupK: 2.0,         // ...då höjs tröskeln för "rörelse" i stället
   vetoSpeedK: 3.0,      // vetot gäller bara när utjämnad fart är låg
   emaSec: 10,           // tidskonstant för utjämnad fart
+  jumpSlackK: 2.0,      // brusmarginal (× summan av noggrannheterna) i rimlighetsspärren
   maxGapSec: 10,                           // längre lucka → mät förflyttning i stället
   bufSec: 40
 };
@@ -287,7 +289,7 @@ function start() {
     return;
   }
   S.running = true; S.runStart = Date.now();
-  S.kalman.reset(); S.anchor = null; S.last = null;
+  S.kalman.reset(); S.anchor = null; S.last = null; S.lastRaw = null;
   S.buf = []; S.origin = null; S.still = true; S.src = '–'; S.ema = null;
   S.rejAccRun = 0; S.rejSpeedRun = 0;
   $('banner').classList.remove('on'); delete $('banner').dataset.kind;
@@ -352,11 +354,34 @@ function onFix(pos) {
   }
   S.rejAccRun = 0;
 
-  // 2. Kalman-utjämning (om filtrering är på för läget).
+  // 2. Rimlighetsspärr på RÅ position, före filtret: ett skräpfix (vanligt när
+  //    telefonen växlar mellan satellit- och nätverksposition) får aldrig matas
+  //    in i Kalman-filtret. Görs det förgiftas skattningen, och de närmast
+  //    följande korrekta fixen ser då själva ut som orimliga hopp och kastas.
+  const raw = {lat:c.latitude, lng:c.longitude, acc:acc, t:tMs};
+  let dt = 0, step = 0;
+  if (S.lastRaw) {
+    dt = (tMs - S.lastRaw.t) / 1000;
+    step = haversine(S.lastRaw, raw);
+    // Två råa fix skiljer sig alltid åt med mätbrus. Dra av brusmarginalen innan
+    // farten bedöms, annars kastas fullt korrekta fix så fort bruset slår till.
+    const slack = TUNE.jumpSlackK * (S.lastRaw.acc + acc);
+    if (dt > 0 && dt < 300 && Math.max(0, step - slack) / dt > m.maxSpeed) {
+      S.rejected++; S.rejSpeedRun++;
+      if (S.rejSpeedRun >= 4) hint('Du rör dig snabbare än läget "' + m.label +
+        '" tillåter, så fixen kastas. Byt rörelsetyp under Inställningar.');
+      render(); return;
+    }
+  }
+  S.rejSpeedRun = 0;
+  clearHint();
+
+  // 3. Kalman-utjämning (om filtrering är på för läget).
   const p = m.filter ? S.kalman.process(c.latitude, c.longitude, acc, tMs)
                      : {lat:c.latitude, lng:c.longitude, acc:acc};
   const point = {lat:p.lat, lng:p.lng, acc:p.acc, t:tMs};
   S.fixes++;
+  S.lastRaw = raw;
 
   if (!S.last) {                      // första godkända fixen: nollställ referenserna
     S.last = point; S.anchor = point; S.origin = point;
@@ -364,19 +389,6 @@ function onFix(pos) {
     S.track.push([point.lat, point.lng, tMs, acc]);
     render(); paint(); return;
   }
-
-  const dt = (tMs - S.last.t) / 1000;
-  const step = haversine(S.last, point);
-
-  // 3. Teleport-skydd: orimlig hastighet för läget = skräpfix.
-  if (dt > 0 && dt < 300 && step / dt > m.maxSpeed) {
-    S.rejected++; S.rejSpeedRun++;
-    if (S.rejSpeedRun >= 4) hint('Du rör dig snabbare än läget "' + m.label +
-      '" tillåter, så fixen kastas. Byt rörelsetyp under Inställningar.');
-    render(); return;
-  }
-  S.rejSpeedRun = 0;
-  clearHint();
 
   // 4. Lokalt meterkoordinatsystem kring startpunkten (för regression och veto).
   const latR = S.origin.lat * Math.PI/180;
@@ -388,9 +400,29 @@ function onFix(pos) {
   const cutoff = tMs/1000 - TUNE.bufSec;
   while (S.buf.length > 2 && S.buf[0].t < cutoff) S.buf.shift();
 
-  // 5. Hastighet: dopplerhastigheten från GPS:en är den exaktaste källan när den
-  //    finns (telefoner ger den). Annars skattas den med regression över fönstret.
+  // 5. Spårpunkter för karta/GPX (glesa: bruset ska inte rita taggar).
   const sigma = Math.min(point.acc, acc);
+  if (haversine(S.anchor, point) > Math.max(2, 0.5 * sigma)) {
+    S.anchor = point;
+    S.track.push([point.lat, point.lng, tMs, acc]);
+    if (S.track.length > MAX_TRACK) S.track.splice(0, S.track.length - MAX_TRACK);
+    paint();
+  }
+
+  // 6. Datalucka: efter ett långt uppehåll (skärmen släckt, tappad signal, tunnel)
+  //    finns ingen hastighet att integrera — mät den faktiska förflyttningen i
+  //    stället, men bara om den är större än mätbruset så att en lucka medan du
+  //    stått still inte räknas som sträcka. Sträcka och tid bokförs mot samma
+  //    intervall, annars skulle snitthastigheten blåsas upp.
+  if (dt > TUNE.maxGapSec) {
+    if (step > 2 * sigma) { S.total += step; S.movingMs += dt * 1000; }
+    S.speed = 0; S.still = true; S.ema = null;   // gammal fart säger inget nu
+    S.last = point;
+    render(); return;
+  }
+
+  // 7. Hastighet: dopplerhastigheten från GPS:en är den exaktaste källan när den
+  //    finns (telefoner ger den). Annars skattas den med regression över fönstret.
   const dop = (typeof c.speed === 'number' && isFinite(c.speed) && c.speed >= 0) ? c.speed : null;
   let v, vetoSec, vetoK, deadband;
   if (dop !== null) {
@@ -401,11 +433,11 @@ function onFix(pos) {
     v = regressSpeed(TUNE.regSec); S.src = 'regression';
     vetoSec = TUNE.regVetoSec; vetoK = TUNE.regVetoK;
     deadband = Math.max(S.minMove / 3.6, TUNE.regDeadband);
-    if (v === null) { S.last = point; render(); return; }
+    if (v === null) { S.last = point; render(); return; }   // för lite underlag ännu
   }
   if (v > m.maxSpeed) v = m.maxSpeed;
 
-  // 6. Stillhetsveto: har du inte flyttat dig mer än bruset under hela fönstret
+  // 8. Stillhetsveto: har du inte flyttat dig mer än bruset under hela fönstret
   //    står du still, oavsett hur positionen vandrar.
   const net = netMove(vetoSec);
   const a = dt > 0 ? 1 - Math.exp(-dt / TUNE.emaSec) : 1;
@@ -419,29 +451,17 @@ function onFix(pos) {
   } else {
     S.speed = v;
     if (v > S.maxSpeed) S.maxSpeed = v;
-    if (dt > 0) {
-      if (dt <= TUNE.maxGapSec) S.total += v * dt;   // integrera hastigheten
-      else S.total += step;                          // lucka i data: mät förflyttningen
-      S.movingMs += Math.min(dt, TUNE.maxGapSec) * 1000;
-    }
+    if (dt > 0) { S.total += v * dt; S.movingMs += dt * 1000; }   // integrera farten
   }
 
-  // 7. Spårpunkter för karta/GPX (gles: bruset ska inte rita taggar).
-  const dAnchor = haversine(S.anchor, point);
-  if (dAnchor > Math.max(2, 0.5 * sigma)) {
-    S.anchor = point;
-    S.track.push([point.lat, point.lng, tMs, acc]);
-    if (S.track.length > MAX_TRACK) S.track.splice(0, S.track.length - MAX_TRACK);
-    paint();
-  }
   S.last = point;
   render();
 }
 
 function onErr(e) {
   if (e.code === 1) fatal('GPS nekades. Tillåt platsåtkomst för sidan (och sätt "Exakt plats" på i telefonens inställningar), ladda sedan om.');
-  else if (e.code === 2) fatal('Ingen position ännu — gå ut under öppen himmel, GPS:en söker.');
-  else if (e.code === 3) fatal('GPS-timeout, försöker igen…');
+  else if (e.code === 2) hint('Ingen position ännu — gå ut under öppen himmel, GPS:en söker.');
+  else if (e.code === 3) hint('GPS-timeout, försöker igen…');
   render();
 }
 function fatal(msg) { const b = $('banner'); b.textContent = msg; b.classList.add('on'); b.dataset.kind = 'fatal'; }
@@ -589,7 +609,7 @@ $('resetBtn').onclick = () => {
     return;
   }
   resetArmed = false; clearTimeout(resetT); $('resetBtn').textContent = 'Nollställ';
-  S.total = 0; S.track = []; S.anchor = null; S.last = null;
+  S.total = 0; S.track = []; S.anchor = null; S.last = null; S.lastRaw = null;
   S.buf = []; S.origin = null;
   S.elapsed = 0; S.runStart = Date.now(); S.movingMs = 0;
   S.speed = 0; S.maxSpeed = 0; S.fixes = 0; S.rejected = 0;
