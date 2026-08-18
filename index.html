@@ -97,6 +97,8 @@
   .toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
   .banner{background:#2a1620;border:1px solid #5b2434;color:#ffc4cc;border-radius:14px;padding:12px 14px;
     font-size:13px;line-height:1.5;margin-top:10px;display:none}
+  .banner b{color:#fff}
+  .banner button{margin-top:12px;width:100%;background:#4a1f2c;border-color:#7a3346;color:#ffe3e8}
   .banner.on{display:block}
 </style>
 </head>
@@ -134,7 +136,10 @@
      target="_blank" rel="noopener">© OpenStreetMap-bidragsgivarna</a>
 </div>
 
-<div class="banner" id="banner"></div>
+<div class="banner" id="banner">
+  <div id="bannerText"></div>
+  <button class="ghost" id="bannerBtn" hidden>Försök igen</button>
+</div>
 
 <div class="row">
   <button class="primary" id="startBtn">Starta</button>
@@ -507,21 +512,51 @@ function glesaSpar() {
   S.track = glesad.concat(S.track.slice(halva));
 }
 
+/* Nekad plats utan att användaren fått frågan betyder nästan alltid att spärren
+   sitter i telefonens inställningar, inte i webbläsarens dialog. Säg var. */
+const NEKAD =
+  '<b>Platsåtkomst nekas — utan att du får frågan.</b> Då sitter spärren i telefonens ' +
+  'inställningar, inte i appen.<br><br>' +
+  '<b>iPhone:</b> Inställningar → Integritetsskydd &amp; säkerhet → Platstjänster → slå på. ' +
+  'Scrolla ner till <b>Safari-webbplatser</b> → välj <b>Medan appen används</b> och slå på ' +
+  '<b>Exakt plats</b>. Har du nekat sidan tidigare: tryck på ikonen till vänster i ' +
+  'adressfältet → Webbplatsinställningar → <b>Plats</b> → Fråga eller Tillåt.<br><br>' +
+  '<b>Android:</b> tryck på låset i adressfältet → Behörigheter → <b>Plats</b> → Tillåt.' +
+  '<br><br>Kom sedan tillbaka hit och tryck Försök igen.';
+
+function nekad() {
+  if (S.running) stop();          // ingen mätning pågår — låt inte klockan ticka
+  fatal(NEKAD, {html: true, knapp: true});
+  render();
+}
+
 function onErr(e) {
-  if (e.code === 1) fatal('GPS nekades. Tillåt platsåtkomst för sidan (och sätt "Exakt plats" på i telefonens inställningar), ladda sedan om.');
+  if (e.code === 1) nekad();
   else if (e.code === 2) hint('Ingen position ännu — gå ut under öppen himmel, GPS:en söker.');
   else if (e.code === 3) hint('GPS-timeout, försöker igen…');
   render();
 }
-function fatal(msg) { const b = $('banner'); b.textContent = msg; b.classList.add('on'); b.dataset.kind = 'fatal'; }
+function fatal(msg, opt) {
+  const b = $('banner'), t = $('bannerText');
+  if (opt && opt.html) t.innerHTML = msg; else t.textContent = msg;
+  $('bannerBtn').hidden = !(opt && opt.knapp);
+  b.classList.add('on'); b.dataset.kind = 'fatal';
+}
 function hint(msg) {
   const b = $('banner');
   if (b.dataset.kind === 'fatal' && b.classList.contains('on')) return;
-  b.textContent = msg; b.classList.add('on'); b.dataset.kind = 'hint';
+  $('bannerText').textContent = msg;
+  $('bannerBtn').hidden = true;
+  b.classList.add('on'); b.dataset.kind = 'hint';
+}
+function stangBanner() {
+  const b = $('banner');
+  b.classList.remove('on'); delete b.dataset.kind;
+  $('bannerBtn').hidden = true;
 }
 function clearHint() {
   const b = $('banner');
-  if (b.dataset.kind !== 'fatal') b.classList.remove('on');
+  if (b.dataset.kind !== 'fatal') { b.classList.remove('on'); $('bannerBtn').hidden = true; }
 }
 
 /* ---------------- Wake lock ---------------- */
@@ -950,6 +985,7 @@ $('resetBtn').onclick = () => {
   S.kalman.reset(); setFollow(true); save(); buzz(40); render(); paint(); toast('Nollställd');
 };
 $('exportBtn').onclick = download;
+$('bannerBtn').onclick = () => { stangBanner(); if (!S.running) start(); };
 
 const modesEl = $('modes');
 Object.keys(MODES).forEach(k => {
