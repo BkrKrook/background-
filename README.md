@@ -25,6 +25,27 @@ den i helskärm utan flikar, heter **Sorenta 4.0** under ikonen, och fungerar of
 skärmen släcks — appen håller därför skärmen tänd åt dig (kan stängas av i
 inställningarna). Bara en native-app kan mäta med släckt skärm.
 
+## Om appen inte får din position
+
+Får du **GPS nekades** utan att telefonen någonsin frågat om plats, sitter spärren i
+telefonens inställningar — webbläsaren hinner svara nej innan den visar en dialog.
+
+**iPhone:** Inställningar → Integritetsskydd & säkerhet → **Platstjänster** → slå på.
+Scrolla ner till **Safari-webbplatser** → välj **Medan appen används** och slå på
+**Exakt plats**. Utan *Exakt plats* får appen bara en grov position på hundratals meter,
+och då kastas nästan alla fix av noggrannhetsgrinden.
+
+Har du nekat sidan en gång kommer frågan inte tillbaka av sig själv: tryck på ikonen till
+vänster i adressfältet → **Webbplatsinställningar** → **Plats** → *Fråga* eller *Tillåt*.
+
+**Android:** tryck på låset i adressfältet → Behörigheter → **Plats** → Tillåt.
+
+Appen visar samma vägbeskrivning i en röd ruta när den blir nekad, med en **Försök igen**-knapp
+som gör om försöket utan att du behöver ladda om sidan. Mätningen stoppas samtidigt, så
+klockan inte tickar på en mätning som aldrig kom igång.
+
+Adressen måste dessutom vara `https://` — på `http://` lämnar webbläsaren aldrig ut GPS.
+
 ## Så mäts sträckan
 
 Att bara summera avstånden mellan GPS-punkter ger kraftigt uppblåsta värden: GPS:ens
@@ -180,7 +201,7 @@ Lokalt: `npm run serve` och öppna `http://localhost:3000/` (GPS fungerar på
 
 ```bash
 npm install
-npm test              # båda sviterna: 38 mätkontroller + 37 kartkontroller
+npm test              # båda sviterna: 45 mätkontroller + 37 kartkontroller
 npm run test:matning  # bara mätnoggrannheten
 npm run test:karta    # bara kartan
 npm run skarmdump     # uppdaterar README-bilden

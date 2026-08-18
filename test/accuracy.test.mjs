@@ -92,10 +92,12 @@ async function newPage() {
   page.on('pageerror', e => konsolfel.push('PAGEERROR: ' + e.message));
   page.on('console', m => { if (m.type() === 'error') konsolfel.push('CONSOLE: ' + m.text()); });
   await page.addInitScript(() => {
-    let cb = null;
+    let cb = null, eb = null, starter = 0;
     Object.defineProperty(navigator, 'geolocation', {configurable: true, value: {
-      watchPosition: s => { cb = s; return 1; }, clearWatch: () => { cb = null; },
-      getCurrentPosition: () => {}}});
+      watchPosition: (s, e) => { cb = s; eb = e; starter++; return starter; },
+      clearWatch: () => { cb = null; }, getCurrentPosition: () => {}}});
+    window.__err = kod => eb && eb({code: kod, message: 'test'});
+    window.__starter = () => starter;
     window.__feed = list => { for (const f of list) { if (!cb) break;
       cb({coords: {latitude: f.lat, longitude: f.lng, accuracy: f.acc, speed: f.speed,
                    altitude: null, altitudeAccuracy: null, heading: null}, timestamp: f.t}); } };
@@ -183,9 +185,10 @@ console.log('\n== Robusthet ==');
   check('fix med acc 80 m kastas', Math.abs(efterDalig - efterHopp) < 0.01, (efterDalig-efterHopp).toFixed(2) + ' m tillagt');
 
   // Övergående GPS-timeout får inte låsa felbannern permanent.
-  await page.evaluate(() => window.__tripp.S && document.getElementById('banner'));
-  await page.evaluate(() => { const b = document.getElementById('banner');
-    b.textContent = 'GPS-timeout, försöker igen…'; b.classList.add('on'); b.dataset.kind = 'hint'; });
+  await page.evaluate(() => window.__err(3));
+  const timeoutVisas = await page.evaluate(() =>
+    document.getElementById('banner').classList.contains('on'));
+  check('timeout visar en varning', timeoutVisas);
   await page.evaluate(l => window.__feed([{lat: l.lat, lng: l.lng, acc: 5, speed: 1.4, t: l.t + 3000}]), sista);
   const bannerKvar = await page.evaluate(() => document.getElementById('banner').classList.contains('on'));
   check('timeout-varning släpper igen', !bannerKvar, bannerKvar ? 'bannern sitter kvar' : '');
@@ -258,6 +261,44 @@ console.log('\n== Gränssnitt ==');
   await page.waitForTimeout(200);
   check('nollställ nollar', (await page.evaluate(() => window.__tripp.S.total)) === 0);
   await page.screenshot({path: path.join(ROOT, 'test', 'skarmdump.png')});
+  await page.close();
+}
+
+console.log('\n== Nekad platsåtkomst ==');
+{
+  const page = await newPage();
+  await page.evaluate(() => window.__err(1));            // PERMISSION_DENIED
+  await page.waitForTimeout(200);
+  const efter = await page.evaluate(() => ({
+    running: window.__tripp.S.running,
+    knapp: document.getElementById('startBtn').textContent,
+    banner: document.getElementById('banner').classList.contains('on'),
+    text: document.getElementById('bannerText').textContent,
+    forsokKnapp: !document.getElementById('bannerBtn').hidden,
+  }));
+  check('mätningen stoppas vid nekad plats', efter.running === false, 'knapp: ' + efter.knapp);
+  check('klockan tickar inte vidare', efter.knapp !== 'Pausa', efter.knapp);
+  check('meddelandet pekar ut Platstjänster',
+        efter.banner && /Platstjänster/.test(efter.text) && /Exakt plats/.test(efter.text));
+  check('försök igen-knapp visas', efter.forsokKnapp);
+
+  const fore = await page.evaluate(() => window.__starter());
+  await page.click('#bannerBtn');
+  await page.waitForTimeout(200);
+  const omstart = await page.evaluate(() => ({starter: window.__starter(),
+    running: window.__tripp.S.running,
+    banner: document.getElementById('banner').classList.contains('on')}));
+  check('försök igen startar om GPS-sökningen',
+        omstart.starter === fore + 1 && omstart.running === true && !omstart.banner,
+        'watchPosition-anrop ' + fore + ' → ' + omstart.starter);
+
+  // Övergående fel ska fortfarande bara ge en varning som släpper.
+  await page.evaluate(() => window.__err(3));
+  await page.waitForTimeout(150);
+  const timeout = await page.evaluate(() => ({on: document.getElementById('banner').classList.contains('on'),
+    knapp: !document.getElementById('bannerBtn').hidden, running: window.__tripp.S.running}));
+  check('timeout stoppar inte mätningen',
+        timeout.on && !timeout.knapp && timeout.running === true);
   await page.close();
 }
 
