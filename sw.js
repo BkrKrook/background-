@@ -1,5 +1,5 @@
-/* Offline-cache så trippmätaren fungerar utan täckning (GPS behöver inget nät). */
-const CACHE = 'trippmatare-v1';
+/* Offline-cache så Sören Mäter fungerar utan täckning (GPS behöver inget nät). */
+const CACHE = 'soren-mater-v1';
 const ASSETS = ['./', './index.html', './manifest.webmanifest', './icon.svg',
                 './icon-192.png', './icon-512.png', './icon-180.png'];
 
