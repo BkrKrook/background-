@@ -1,13 +1,13 @@
 {
-  "name": "aurora-lockscreen",
+  "name": "soren-mater",
   "version": "1.0.0",
-  "description": "Perfectly-looping aurora live wallpaper for iPhone lock screen",
+  "description": "Sören Mäter - trippmätare som mäter hur många meter du rör dig",
   "scripts": {
-    "render": "node render.mjs"
+    "test": "node test/accuracy.test.mjs",
+    "serve": "npx --yes serve ."
   },
   "license": "ISC",
-  "dependencies": {
-    "@ffmpeg-installer/ffmpeg": "^1.1.0",
+  "devDependencies": {
     "playwright-core": "^1.61.1"
   },
   "private": true
