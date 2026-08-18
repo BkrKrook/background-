@@ -1,7 +1,7 @@
 {
-  "name": "Sören Mäter - trippmätare",
-  "short_name": "Sören Mäter",
-  "description": "Sören Mäter — exakt trippmätare som mäter hur många meter du rör dig med filtrerad GPS-spårning.",
+  "name": "Sorenta 4.0 - trippmätare",
+  "short_name": "Sorenta 4.0",
+  "description": "Sorenta 4.0 — exakt trippmätare som mäter hur många meter du rör dig, med karta från OpenStreetMap.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

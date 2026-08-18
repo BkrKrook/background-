@@ -1,10 +1,13 @@
 {
-  "name": "soren-mater",
+  "name": "sorenta",
   "version": "1.0.0",
-  "description": "Sören Mäter - trippmätare som mäter hur många meter du rör dig",
+  "description": "Sorenta 4.0 - trippmätare som mäter hur många meter du rör dig",
   "scripts": {
-    "test": "node test/accuracy.test.mjs",
-    "serve": "npx --yes serve ."
+    "test": "node test/accuracy.test.mjs && node test/karta.test.mjs",
+    "test:matning": "node test/accuracy.test.mjs",
+    "test:karta": "node test/karta.test.mjs",
+    "serve": "npx --yes serve .",
+    "skarmdump": "node test/skarmdump.mjs"
   },
   "license": "ISC",
   "devDependencies": {
