@@ -264,6 +264,63 @@ console.log('\n== Gränssnitt ==');
   await page.close();
 }
 
+console.log('\n== Mjuk visning ==');
+{
+  const page = await newPage();
+  const t0 = 1e12, LAT = 57.7826;
+  // två fix så att fixintervallet är känt, sedan ett som lägger till ~7 m
+  await page.evaluate(([lat, t]) => window.__feed([
+    {lat: lat, lng: 14.1618, acc: 5, speed: 7, t: t},
+    {lat: lat + 7/111132.95, lng: 14.1618, acc: 5, speed: 7, t: t + 1000}]), [LAT, t0]);
+  await page.waitForTimeout(150);
+  await page.evaluate(([lat, t]) => window.__feed([
+    {lat: lat + 14/111132.95, lng: 14.1618, acc: 5, speed: 7, t: t + 2000}]), [LAT, t0]);
+
+  // följ vad som faktiskt står på skärmen, bildruta för bildruta
+  const prov = await page.evaluate(() => new Promise(klar => {
+    const v = [];
+    const tick = () => {
+      v.push({visad: parseFloat(document.getElementById('dist').textContent.replace(/\s/g,'').replace(',','.')),
+              matt: window.__tripp.S.total,
+              fart: parseFloat(document.getElementById('speed').textContent.replace(',','.'))});
+      if (v.length < 45) requestAnimationFrame(tick); else klar(v);
+    };
+    requestAnimationFrame(tick);
+  }));
+  const visade = prov.map(p => p.visad);
+  const unika = new Set(visade).size;
+  check('sträckan rullar i stället för att hoppa', unika >= 5,
+        unika + ' olika värden under ' + prov.length + ' bildrutor');
+  check('sträckan går bara framåt',
+        visade.every((v, i) => i === 0 || v >= visade[i-1] - 1e-9),
+        visade[0].toFixed(1) + ' → ' + visade[visade.length-1].toFixed(1) + ' m');
+  check('visningen går aldrig före mätningen',
+        prov.every(p => p.visad <= p.matt + 0.06),
+        'max ' + Math.max(...prov.map(p => p.visad - p.matt)).toFixed(3) + ' m före');
+  const farter = prov.map(p => p.fart);
+  check('farten sveper upp mjukt', new Set(farter).size >= 5,
+        farter[0].toFixed(1) + ' → ' + farter[farter.length-1].toFixed(1) + ' km/h');
+
+  // ...och landar exakt på det uppmätta värdet när inget mer kommer in
+  await page.waitForTimeout(3000);
+  const slut = await page.evaluate(() => ({
+    visad: parseFloat(document.getElementById('dist').textContent.replace(/\s/g,'').replace(',','.')),
+    matt: window.__tripp.S.total}));
+  check('landar exakt på uppmätt sträcka', Math.abs(slut.visad - slut.matt) < 0.05,
+        slut.visad.toFixed(1) + ' vs ' + slut.matt.toFixed(2) + ' m');
+
+  // markören ska glida, inte hoppa
+  const markor = await page.evaluate(() => ({lat: window.__tripp.V.lat, sista: window.__tripp.S.last.lat}));
+  check('kartmarkören har en egen mjuk position', markor.lat != null);
+
+  await page.click('#resetBtn'); await page.click('#resetBtn');
+  await page.waitForTimeout(120);
+  const efterNoll = await page.evaluate(() =>
+    parseFloat(document.getElementById('dist').textContent.replace(',','.')));
+  check('nollställ snappar visningen till noll', efterNoll === 0, efterNoll + ' m');
+  await page.close();
+}
+
 console.log('\n== Nekad platsåtkomst ==');
 {
   const page = await newPage();

@@ -268,7 +268,7 @@ const S = {
   lastRaw:null,            // senaste accepterade RÅ position (rimlighetsspärren)
   elapsed:0, runStart:0,   // total tid (ms)
   movingMs:0,
-  speed:0, maxSpeed:0, still:true, src:'–', ema:null,
+  speed:0, maxSpeed:0, still:true, src:'–', ema:null, fixDt:0,
   fixes:0, rejected:0, lastFixT:0, lastAcc:null,
   rejAccRun:0, rejSpeedRun:0,
   mode:'gang', accGate:25, minMove:0.9, wake:true,   // minMove i km/h
@@ -334,7 +334,7 @@ function start() {
   }
   S.running = true; S.runStart = Date.now();
   S.kalman.reset(); S.anchor = null; S.last = null; S.lastRaw = null;
-  S.buf = []; S.origin = null; S.still = true; S.src = '–'; S.ema = null;
+  S.buf = []; S.origin = null; S.still = true; S.src = '–'; S.ema = null; S.fixDt = 0;
   S.rejAccRun = 0; S.rejSpeedRun = 0;
   $('banner').classList.remove('on'); delete $('banner').dataset.kind;
   S.watchId = navigator.geolocation.watchPosition(onFix, onErr, {
@@ -344,6 +344,7 @@ function start() {
   });
   requestWake();
   buzz(30);
+  animeraStart();
   render(); paint();
 }
 
@@ -419,6 +420,7 @@ function onFix(pos) {
   }
   S.rejSpeedRun = 0;
   clearHint();
+  if (dt > 0.1 && dt < 10) S.fixDt = S.fixDt ? S.fixDt + 0.3 * (dt - S.fixDt) : dt;
 
   // 3. Kalman-utjämning (om filtrering är på för läget).
   const p = m.filter ? S.kalman.process(c.latitude, c.longitude, acc, tMs)
@@ -568,16 +570,69 @@ async function requestWake() {
 }
 function releaseWake() { try { wakeLock && wakeLock.release(); } catch(e){} wakeLock = null; }
 document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') animeraStart();
   if (document.visibilityState === 'visible' && S.running) requestWake();
   if (document.visibilityState === 'hidden') save();
 });
 
+/* ---------------- Mjuk visning ----------------
+   Mätningen är stegvis: ett GPS-fix i sekunden, och varje fix lägger till hela sin
+   sträcka på en gång. Instrumenten i en bil rör sig inte så — nålen sveper och
+   vägmätaren rullar. Visningen har därför egna värden som jagar de uppmätta, medan
+   de uppmätta ligger orörda: sträckan som räknas, exporteras och sparas är exakt
+   densamma som förut. Den visade sträckan går aldrig före den uppmätta och landar
+   exakt på den så fort du stannar.                                              */
+const V = {dist: 0, speed: 0, lat: null, lng: null, t: 0, raf: 0, mapT: 0};
+
+/* Tidskonstant = tiden mellan fixen, så ett fix hinner rullas färdigt ungefär när
+   nästa kommer. Då blir rörelsen jämn i stället för ryckig. */
+const rullTid = () => Math.max(0.5, Math.min(3, S.fixDt || 1));
+/* Står mätningen still — pausad, stillastående eller inget fix på ett tag — finns
+   inget mer på väg in. Då ska visningen hinna ifatt och landa, inte krypa efter. */
+function jaktTid() {
+  const t = rullTid();
+  const sedanFix = S.lastFixT ? (Date.now() - S.lastFixT) / 1000 : Infinity;
+  return (!S.running || S.still || sedanFix > 2 * t) ? t / 3 : t;
+}
+const NAL_TID = 1.1;                     // hastighetsnålens tröghet i sekunder
+
+function animera(nu) {
+  V.raf = 0;
+  const dt = V.t ? Math.min(0.25, (nu - V.t) / 1000) : 0;
+  V.t = nu;
+  if (dt > 0) {
+    const k = 1 - Math.exp(-dt / jaktTid());
+    V.dist += (S.total - V.dist) * k;
+    if (V.dist > S.total || Math.abs(S.total - V.dist) < 0.02) V.dist = S.total;
+    V.speed += (S.speed - V.speed) * (1 - Math.exp(-dt / NAL_TID));
+    if (Math.abs(S.speed - V.speed) < 0.005) V.speed = S.speed;
+    if (S.last) {                        // markören glider mellan fixen
+      if (V.lat == null) { V.lat = S.last.lat; V.lng = S.last.lng; }
+      else { V.lat += (S.last.lat - V.lat) * k; V.lng += (S.last.lng - V.lng) * k; }
+    }
+  }
+  ritaSiffror();
+  if (nu - V.mapT > 66) { V.mapT = nu; schedulePaint(); }   // kartan klarar sig på ~15 b/s
+  if (S.running || Math.abs(S.total - V.dist) > 0.02 || Math.abs(S.speed - V.speed) > 0.005)
+    V.raf = requestAnimationFrame(animera);
+}
+function animeraStart() { if (!V.raf) { V.t = 0; V.raf = requestAnimationFrame(animera); } }
+function animeraSnappa() {               // hoppa direkt till mätvärdet (t.ex. nollställ)
+  V.dist = S.total; V.speed = S.speed;
+  if (S.last) { V.lat = S.last.lat; V.lng = S.last.lng; } else { V.lat = V.lng = null; }
+  ritaSiffror();
+}
+function ritaSiffror() {
+  const d = V.dist;
+  $('dist').textContent = d < 10000 ? nf(d, 1) : nf(d, 0);
+  $('distKm').textContent = nf(d/1000, 3) + ' km';
+  $('speed').textContent = nf(V.speed * 3.6, 1);
+}
+
 /* ---------------- Rendering ---------------- */
 function render() {
   const d = S.total;
-  $('dist').textContent = d < 10000 ? nf(d, 1) : nf(d, 0);
-  $('distKm').textContent = nf(d/1000, 3) + ' km';
-  $('speed').textContent = nf(S.speed * 3.6, 1);
+  ritaSiffror();
   $('max').textContent = nf(S.maxSpeed * 3.6, 1);
   const el = elapsedMs();
   const avg = S.movingMs > 1000 ? (d / (S.movingMs/1000)) * 3.6 : 0;
@@ -808,10 +863,22 @@ function paint() {
     g.fillStyle = '#0b0f14'; g.strokeStyle = '#8fa3ba'; g.lineWidth = 2.5;
     g.beginPath(); g.arc(X(s0[0]), Y(s0[1]), 5, 0, 7); g.fill(); g.stroke();
 
-    const l = t[t.length-1], lp = project(l[0], l[1], z);
+    const l = t[t.length-1];
+    // Markören ritas på den mjuka positionen så att den glider mellan fixen i
+    // stället för att hoppa. Spårlinjen dras hela vägen fram till den.
+    const mLat = V.lat == null ? l[0] : V.lat, mLng = V.lng == null ? l[1] : V.lng;
+    const lp = project(mLat, mLng, z);
     const lx = X(lp[0]), ly = Y(lp[1]);
+    if (t.length > 1) {
+      const f = project(l[0], l[1], z);
+      g.lineJoin = 'round'; g.lineCap = 'round';
+      g.strokeStyle = 'rgba(4,16,12,.6)'; g.lineWidth = 7;
+      g.beginPath(); g.moveTo(X(f[0]), Y(f[1])); g.lineTo(lx, ly); g.stroke();
+      g.strokeStyle = '#2ee6a8'; g.lineWidth = 3.5;
+      g.beginPath(); g.moveTo(X(f[0]), Y(f[1])); g.lineTo(lx, ly); g.stroke();
+    }
     if (S.lastAcc) {                                   // noggrannhetscirkel
-      const r = S.lastAcc / mPerPx(l[0], z);
+      const r = S.lastAcc / mPerPx(mLat, z);
       if (r > 6 && r < 400) {
         g.fillStyle = 'rgba(46,230,168,.10)'; g.strokeStyle = 'rgba(46,230,168,.35)';
         g.lineWidth = 1;
@@ -982,7 +1049,8 @@ $('resetBtn').onclick = () => {
   S.elapsed = 0; S.runStart = Date.now(); S.movingMs = 0;
   S.speed = 0; S.maxSpeed = 0; S.fixes = 0; S.rejected = 0;
   S.rejAccRun = 0; S.rejSpeedRun = 0;
-  S.kalman.reset(); setFollow(true); save(); buzz(40); render(); paint(); toast('Nollställd');
+  S.kalman.reset(); setFollow(true); save(); buzz(40);
+  animeraSnappa(); render(); paint(); toast('Nollställd');
 };
 $('exportBtn').onclick = download;
 $('bannerBtn').onclick = () => { stangBanner(); if (!S.running) start(); };
@@ -1024,7 +1092,7 @@ function setWake(on) {
 }
 
 /* Felsökningshandtag (används av testet, ofarligt i drift). */
-window.__tripp = {S:S, M:M, MODES:MODES, TUNE:TUNE, haversine:haversine,
+window.__tripp = {S:S, M:M, V:V, MODES:MODES, TUNE:TUNE, haversine:haversine,
   project:project, unproject:unproject, mPerPx:mPerPx,
   setMode:function(k){setMode(k);}, setTiles:function(v){setTiles(v);},
   setFollow:function(v){setFollow(v);}, paint:function(){paint();}};
@@ -1055,7 +1123,7 @@ let sistaSpar = 0;
 setInterval(() => {
   render();
   if (!S.running) return;
-  schedulePaint();                       // håller kartan och markören färska
+  animeraStart();                        // vaknar igen om fliken varit dold
   const nu = Date.now();
   if (nu - sistaSpar >= 2000) { sistaSpar = nu; save(); }   // hela spåret är tungt
 }, 500);

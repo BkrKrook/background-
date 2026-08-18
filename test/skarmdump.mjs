@@ -106,7 +106,11 @@ for (let t = 0; t < 360; t++) {                       // 6 min runt ett kvarter
               t: t0 + t*1000, speed: Math.max(0, sp + g()*.3)});
 }
 await page.evaluate(f => window.__feed(f), fixes);
-await page.waitForTimeout(1500);
+// Visningen rullar mot mätvärdet; vänta tills den landat, annars fångar bilden
+// siffran mitt i rullningen (skriptet matar in sex minuter på ett ögonblick).
+await page.waitForFunction(() => Math.abs(window.__tripp.V.dist - window.__tripp.S.total) < 0.05,
+                           null, {timeout: 15000}).catch(() => {});
+await page.waitForTimeout(800);
 await page.screenshot({path: path.join(ROOT, 'skarmdump.png')});
 console.log('skarmdump.png skriven — sträcka', await page.textContent('#dist'),
             'm (sant 486 m), rutor:', await page.evaluate(() => window.__tripp.M.loaded));

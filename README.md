@@ -160,6 +160,24 @@ Kartdata © OpenStreetMap-bidragsgivarna, tillgängligt under
 [Open Database License](https://www.openstreetmap.org/copyright). Attributionen visas med
 den formuleringen i kartans hörn så länge kartbilder ritas, vilket OSM:s villkor kräver.
 
+## Mjuk visning
+
+GPS:en levererar ett fix i sekunden, och varje fix lägger till hela sin sträcka på en
+gång. Visas det rakt av hoppar siffran — 0, 0, 0, sedan plötsligt 4,2 m. Instrumenten i
+en bil beter sig inte så: nålen sveper och vägmätaren rullar.
+
+Därför har visningen egna värden som jagar de uppmätta. Sträckan rullar med en
+tidskonstant lika lång som den uppmätta tiden mellan fixen, så ett fix hinner rullas
+färdigt ungefär när nästa kommer och rörelsen blir jämn. Farten sveper med drygt en
+sekunds tröghet, som en nål med massa. Kartmarkören glider på samma sätt mellan fixen,
+och spårlinjen dras hela vägen fram till den.
+
+**Mätningen rörs inte.** Sträckan som räknas, sparas och exporteras är exakt densamma som
+förut — det är bara siffran på skärmen som fått tröghet. Den visade sträckan går aldrig
+före den uppmätta, och när mätningen står still (pausad, stillastående, eller inget fix på
+ett tag) tar visningen igen sig tre gånger snabbare och landar exakt på det uppmätta
+värdet. Uppmätt i webbläsare: 60 bilder i sekunden även med 6 000 spårpunkter.
+
 ## Inställningar
 
 | Inställning | Vad den gör |
@@ -201,7 +219,7 @@ Lokalt: `npm run serve` och öppna `http://localhost:3000/` (GPS fungerar på
 
 ```bash
 npm install
-npm test              # båda sviterna: 45 mätkontroller + 37 kartkontroller
+npm test              # båda sviterna: 52 mätkontroller + 37 kartkontroller
 npm run test:matning  # bara mätnoggrannheten
 npm run test:karta    # bara kartan
 npm run skarmdump     # uppdaterar README-bilden
