@@ -37,7 +37,7 @@ self.addEventListener('fetch', e => {
       cache.match(e.request).then(träff => träff || fetch(e.request).then(res => {
         // Ogiltiga svar (fel, hastighetsbegränsning) ska inte cachas.
         if (res && (res.ok || res.type === 'opaque')) {
-          cache.put(e.request, res.clone()).then(() => trimma(cache)).catch(() => {});
+          e.waitUntil(cache.put(e.request, res.clone()).then(() => trimma(cache)).catch(() => {}));
         }
         return res;
       }))
@@ -50,10 +50,16 @@ self.addEventListener('fetch', e => {
   e.respondWith(                            // appfiler: nät-först, cache som reserv
     fetch(e.request)
       .then(res => {
-        const kopia = res.clone();
-        caches.open(CACHE).then(c => c.put(e.request, kopia)).catch(() => {});
+        // Bara dugliga svar får ersätta offlinekopian. Annars skulle ett 404 eller
+        // 500 från servern skriva över den fungerande appen, och det felsvaret bli
+        // det enda användaren ser nästa gång täckningen är borta.
+        if (res && res.ok) {
+          const kopia = res.clone();
+          e.waitUntil(caches.open(CACHE).then(c => c.put(e.request, kopia)).catch(() => {}));
+        }
         return res;
       })
-      .catch(() => caches.match(e.request).then(r => r || caches.match('./index.html')))
+      .catch(() => caches.match(e.request)
+        .then(r => (r && r.ok) ? r : caches.match('./index.html')))
   );
 });

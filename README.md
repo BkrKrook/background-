@@ -58,6 +58,11 @@ Sorenta 4.0 gör i stället så här:
    förflyttningen i stället, men bara om den är större än mätbruset, och sträcka och
    tid bokförs mot samma intervall så att snitthastigheten inte blåses upp.
 
+Spåret som ritas och exporteras rymmer 8 000 punkter. På riktigt långa turer gallras den
+äldsta halvan (varannan punkt behålls) i stället för att början kapas bort, så spåret
+alltid täcker hela turen — grövre längst bak, men helt. Sträckan påverkas inte alls av
+gallringen, den räknas ur hastigheten och inte ur spårpunkterna.
+
 ### Uppmätt noggrannhet
 
 `npm run test:matning` kör appen i en riktig webbläsare mot simulerade banor med känd
@@ -119,13 +124,20 @@ en enda fil utan beroenden, och den fungerar likadant när rutorna inte går att
 rutor du redan sett i en egen cache (max 500 stycken), så kartan finns kvar över områden
 du passerat även när täckningen tar slut — GPS:en i sig behöver inget nät. Vill du inte
 lägga mobildata på kartbilder alls väljer du **Utan kartbild** under Inställningar; då
-ritas spåret på tom bakgrund och mätningen påverkas inte alls. Går rutorna inte att hämta
-(ingen täckning, blockerat nät) märker appen det efter några försök och ritar spåret utan
-kartbild i stället.
+ritas spåret på tom bakgrund och mätningen påverkas inte alls.
+
+**När rutorna inte går att hämta** — tunnel, tappad täckning, blockerat nät — vilar varje
+misslyckad ruta innan den försöks igen (30 s, sedan dubbelt så länge för varje nytt fel),
+och efter fem fel i rad slutar appen begära rutor helt och skriver *kartrutor kunde inte
+hämtas* i kartans hörn. En minut senare provar den igen, så kartan kommer tillbaka av sig
+själv när täckningen gör det. Utan den vilan skulle varje omritning begära samma trasiga
+ruta på nytt — hundratals anrop i sekunden mot OSM:s servrar, rakt in i deras spärrar och
+rakt ur telefonens batteri. Testsviten mäter just det: högst 40 anrop under tre sekunder
+utan nät.
 
 Kartdata © OpenStreetMap-bidragsgivarna, tillgängligt under
-[Open Database License](https://www.openstreetmap.org/copyright). Attributionen visas i
-kartans hörn så länge kartbilder ritas, vilket OSM:s användningsvillkor kräver.
+[Open Database License](https://www.openstreetmap.org/copyright). Attributionen visas med
+den formuleringen i kartans hörn så länge kartbilder ritas, vilket OSM:s villkor kräver.
 
 ## Inställningar
 
@@ -161,14 +173,14 @@ Lokalt: `npm run serve` och öppna `http://localhost:3000/` (GPS fungerar på
 | `sw.js` | Service worker: cachar appen och sedda kartrutor för offline-bruk |
 | `manifest.webmanifest`, `icon*.png`, `icon.svg` | Hemskärmsikon och app-läge |
 | `test/accuracy.test.mjs` | Mätnoggrannhet och gränssnittsflöden mot simulerade banor |
-| `test/karta.test.mjs` | Projektion, rutladdning, dra/zooma och reservläget utan nät |
+| `test/karta.test.mjs` | Projektion, rutladdning, dra/nyp/zooma och reservläget utan nät |
 | `test/skarmdump.mjs` | Genererar README-bilden |
 
 ## Kör testerna
 
 ```bash
 npm install
-npm test              # båda sviterna: 38 mätkontroller + 26 kartkontroller
+npm test              # båda sviterna: 38 mätkontroller + 37 kartkontroller
 npm run test:matning  # bara mätnoggrannheten
 npm run test:karta    # bara kartan
 npm run skarmdump     # uppdaterar README-bilden

@@ -131,7 +131,7 @@
     <button id="bigBtn" aria-label="Förstora kartan">⤢</button>
   </div>
   <a class="attrib" id="attrib" href="https://www.openstreetmap.org/copyright"
-     target="_blank" rel="noopener">© OpenStreetMap</a>
+     target="_blank" rel="noopener">© OpenStreetMap-bidragsgivarna</a>
 </div>
 
 <div class="banner" id="banner"></div>
@@ -444,7 +444,7 @@ function onFix(pos) {
   if (haversine(S.anchor, point) > Math.max(2, 0.5 * sigma)) {
     S.anchor = point;
     S.track.push([point.lat, point.lng, tMs, acc]);
-    if (S.track.length > MAX_TRACK) S.track.splice(0, S.track.length - MAX_TRACK);
+    if (S.track.length > MAX_TRACK) glesaSpar();
     paint();
   }
 
@@ -495,6 +495,16 @@ function onFix(pos) {
 
   S.last = point;
   render();
+}
+
+/* Vid taket: halvera upplösningen på den äldsta halvan i stället för att kapa bort
+   början. Spåret täcker då hela turen, bara med grövre detalj längst bak — sträckan
+   påverkas inte alls, den räknas ur hastigheten och inte ur spårpunkterna.        */
+function glesaSpar() {
+  const halva = S.track.length >> 1;
+  const glesad = [];
+  for (let i = 0; i < halva; i += 2) glesad.push(S.track[i]);
+  S.track = glesad.concat(S.track.slice(halva));
 }
 
 function onErr(e) {
@@ -571,6 +581,7 @@ function render() {
    enda fil utan beroenden, och när rutorna inte går att hämta (ingen täckning,
    avstängd datatrafik) ritas spåret ändå på tom bakgrund.                    */
 const TILE = 256, MINZ = 2, MAXZ = 19, TILE_CACHE_MAX = 400;
+const FEL_VILA = 30000, FEL_VILA_MAX = 10 * 60000, FEL_TAK = 5, PAUS_VILA = 60000;
 
 const M = {
   url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
@@ -578,7 +589,7 @@ const M = {
   follow: true,                  // ram in hela spåret automatiskt
   tiles: true,                   // hämta kartrutor alls
   big: false,
-  cache: new Map(), pending: 0, fails: 0, broken: false, loaded: 0,
+  cache: new Map(), pending: 0, fails: 0, broken: false, brokenT: 0, loaded: 0,
   raf: 0
 };
 
@@ -628,26 +639,47 @@ function tileUrl(z, x, y) {
   return M.url.replace('{z}', z).replace('{x}', x).replace('{y}', y);
 }
 
-/* Hämtar en ruta ur cachen, startar nedladdning vid behov. */
+/* Hämtar en ruta ur cachen och startar nedladdning vid behov.
+   En ruta som misslyckats får INTE begäras om direkt: posten ligger kvar med en
+   tidsstämpel och rutan vilar (30 s, sedan dubbelt så länge för varje nytt fel).
+   Utan den vilan skulle en tappad täckning ge en självgående anropsstorm mot
+   OSM:s servrar — varje omritning skulle begära samma trasiga rutor på nytt.   */
 function getTile(z, x, y) {
   const n = Math.pow(2, z);
   if (y < 0 || y >= n) return null;
   x = ((x % n) + n) % n;
   const key = z + '/' + x + '/' + y;
-  const rec = M.cache.get(key);
-  if (rec) return rec.ok ? rec.img : null;
+  const post = M.cache.get(key);
+  if (post) {
+    if (post.ok) return post.img;
+    if (!post.fel) return null;                       // hämtning pågår
+    const vila = Math.min(FEL_VILA_MAX, FEL_VILA * Math.pow(2, post.forsok - 1));
+    if (Date.now() - post.fel < vila) return null;    // vilar efter tidigare fel
+  }
   if (M.broken || M.pending > 10) return null;
-  const img = new Image();
-  const fresh = {img: img, ok: false};
-  M.cache.set(key, fresh);
-  if (M.cache.size > TILE_CACHE_MAX) M.cache.delete(M.cache.keys().next().value);
+
+  const rec = post || {ok: false, forsok: 0};
+  rec.fel = 0;
+  M.cache.delete(key); M.cache.set(key, rec);         // nyast sist i cachen
+  for (const gammalNyckel of M.cache.keys()) {
+    if (M.cache.size <= TILE_CACHE_MAX) break;
+    if (gammalNyckel !== key) M.cache.delete(gammalNyckel);
+  }
   M.pending++;
-  img.crossOrigin = 'anonymous';         // OSM skickar CORS-huvud; håller canvasen ren
-  img.onload = () => { fresh.ok = true; M.pending--; M.fails = 0; M.loaded++; schedulePaint(); };
-  img.onerror = () => {
-    M.pending--; M.cache.delete(key);
-    if (++M.fails >= 8 && M.loaded === 0) M.broken = true;   // ingen kartdata att få
+  const img = new Image();
+  rec.img = img;
+  img.crossOrigin = 'anonymous';        // OSM skickar CORS-huvud; håller canvasen ren
+  img.onload = () => {
+    rec.ok = true; rec.forsok = 0; rec.fel = 0;
+    M.pending--; M.fails = 0; M.loaded++;
     schedulePaint();
+  };
+  img.onerror = () => {
+    M.pending--; rec.fel = Date.now(); rec.forsok++;
+    // Räknas oavsett hur många rutor som lyckats tidigare: täckningen kan
+    // försvinna mitt i en mätning, och då ska kartan ge upp och släppa nätet.
+    if (++M.fails >= FEL_TAK) { M.broken = true; M.brokenT = Date.now(); }
+    // Ingen omritning här — den skulle begära samma trasiga ruta på nytt.
   };
   img.src = tileUrl(z, x, y);
   return null;
@@ -672,6 +704,14 @@ function parentTile(z, x, y) {
   return null;
 }
 
+/* Ska kartrutor ritas just nu? Släpper samtidigt nödbromsen när den vilat klart —
+   täckningen kan ha kommit tillbaka sedan sist. */
+function rutorPa() {
+  if (!M.tiles) return false;
+  if (M.broken && Date.now() - M.brokenT >= PAUS_VILA) { M.broken = false; M.fails = 0; }
+  return !M.broken;
+}
+
 function paint() {
   const cv = $('map'), dpr = Math.min(2, window.devicePixelRatio || 1);
   const w = cv.clientWidth, h = cv.clientHeight;
@@ -685,7 +725,7 @@ function paint() {
 
   const t = S.track;
   if (M.follow && t.length) fitTrack(w, h);
-  const visaRutor = M.tiles && !M.broken;
+  const visaRutor = rutorPa();
   $('attrib').classList.toggle('hidden', !visaRutor);
 
   if (M.lat == null) {
@@ -800,35 +840,47 @@ function setFollow(on) {
 }
 
 (function kartInput() {
-  const cv = $('map');
+  const cv = $('map'), wrap = $('mapwrap');
   const pekare = new Map();
   let nyp = null;
+  /* mittpunkt och avstånd mellan de två första fingrarna */
   const mid = () => {
-    const v = [...pekare.values()];
+    const v = [...pekare.values()].slice(0, 2);
+    if (v.length < 2) return null;
     return [(v[0][0]+v[1][0])/2, (v[0][1]+v[1][1])/2,
             Math.hypot(v[0][0]-v[1][0], v[0][1]-v[1][1])];
   };
-  cv.addEventListener('pointerdown', e => {
-    cv.setPointerCapture(e.pointerId);
+  wrap.addEventListener('pointerdown', e => {
+    // Första fingret på en knapp ska trycka knappen; ett andra finger som råkar
+    // landa där ska ändå räknas till nypet.
+    if (!pekare.size && e.target.closest('.mapctl, .attrib')) return;
+    try { cv.setPointerCapture(e.pointerId); } catch (err) {}   // vissa webbläsare nekar
     pekare.set(e.pointerId, [e.clientX, e.clientY]);
-    if (pekare.size === 2) nyp = mid();
+    nyp = mid();                       // referensen räknas om vid varje ändring
   });
-  cv.addEventListener('pointermove', e => {
+  wrap.addEventListener('pointermove', e => {
     if (!pekare.has(e.pointerId)) return;
     const f = pekare.get(e.pointerId);
     pekare.set(e.pointerId, [e.clientX, e.clientY]);
     if (pekare.size === 1) {
       panBy(f[0] - e.clientX, f[1] - e.clientY);
-    } else if (pekare.size === 2 && nyp) {
-      const nu = mid(), r = cv.getBoundingClientRect();
-      if (nyp[2] > 0 && nu[2] > 0) zoomAround(nu[0]-r.left, nu[1]-r.top, Math.log2(nu[2]/nyp[2]));
-      panBy(nyp[0] - nu[0], nyp[1] - nu[1]);
-      nyp = nu;
+      return;
     }
+    const nu = mid();
+    if (!nu || !nyp) { nyp = nu; return; }
+    const r = cv.getBoundingClientRect();
+    // Zoomen ankras i den GAMLA mittpunkten — där fingrarna låg när avståndet
+    // mättes. Ankras den i den nya glider kartan undan lite för varje händelse.
+    if (nyp[2] > 0 && nu[2] > 0) zoomAround(nyp[0]-r.left, nyp[1]-r.top, Math.log2(nu[2]/nyp[2]));
+    panBy(nyp[0] - nu[0], nyp[1] - nu[1]);
+    nyp = nu;
   });
-  const slapp = e => { pekare.delete(e.pointerId); if (pekare.size < 2) nyp = null; };
-  cv.addEventListener('pointerup', slapp);
-  cv.addEventListener('pointercancel', slapp);
+  const slapp = e => {
+    if (!pekare.delete(e.pointerId)) return;
+    nyp = mid();                       // t.ex. ett finger lyft ur ett tregrepp
+  };
+  wrap.addEventListener('pointerup', slapp);
+  wrap.addEventListener('pointercancel', slapp);
   cv.addEventListener('wheel', e => {
     e.preventDefault();
     const r = cv.getBoundingClientRect();
@@ -844,9 +896,14 @@ function setFollow(on) {
   $('centerBtn').onclick = () => setFollow(true);
   $('bigBtn').onclick = () => {
     M.big = !M.big;
-    $('mapwrap').classList.toggle('big', M.big);
-    save(); requestAnimationFrame(schedulePaint);
+    wrap.classList.toggle('big', M.big);
+    save();
   };
+  // Kartytan ändrar storlek av fler skäl än knappen: CSS-övergången när den växer,
+  // skärmrotation, adressfältet som fälls in. Rita om när den faktiskt bytt storlek,
+  // annars blir canvasens bitmapp kvar i fel höjd.
+  if (window.ResizeObserver) new ResizeObserver(() => schedulePaint()).observe(wrap);
+  else window.addEventListener('resize', schedulePaint);
 })();
 
 /* ---------------- Export ---------------- */
@@ -890,7 +947,7 @@ $('resetBtn').onclick = () => {
   S.elapsed = 0; S.runStart = Date.now(); S.movingMs = 0;
   S.speed = 0; S.maxSpeed = 0; S.fixes = 0; S.rejected = 0;
   S.rejAccRun = 0; S.rejSpeedRun = 0;
-  S.kalman.reset(); save(); buzz(40); render(); paint(); toast('Nollställd');
+  S.kalman.reset(); setFollow(true); save(); buzz(40); render(); paint(); toast('Nollställd');
 };
 $('exportBtn').onclick = download;
 
@@ -915,7 +972,7 @@ $('tilesOn').onclick = () => setTiles(true);
 $('tilesOff').onclick = () => setTiles(false);
 function setTiles(on) {
   M.tiles = on;
-  M.broken = false; M.fails = 0;              // nytt försök när man slår på igen
+  M.broken = false; M.fails = 0; M.brokenT = 0;   // nytt försök när man slår på igen
   $('mapState').textContent = on ? 'OpenStreetMap' : 'Utan kartbild';
   $('tilesOn').classList.toggle('on', on);
   $('tilesOff').classList.toggle('on', !on);
@@ -958,7 +1015,14 @@ setTiles(M.tiles);
 setFollow(true);
 $('mapwrap').classList.toggle('big', M.big);
 render(); paint();
-setInterval(() => { render(); if (S.running) save(); }, 500);
+let sistaSpar = 0;
+setInterval(() => {
+  render();
+  if (!S.running) return;
+  schedulePaint();                       // håller kartan och markören färska
+  const nu = Date.now();
+  if (nu - sistaSpar >= 2000) { sistaSpar = nu; save(); }   // hela spåret är tungt
+}, 500);
 window.addEventListener('resize', paint);
 window.addEventListener('pagehide', save);
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
