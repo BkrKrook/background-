@@ -1,5 +1,10 @@
 # Aurora — Live Animated Background for iPhone Lock Screen
 
+> Also in this repo: **[`trippmatare/`](trippmatare/)** — a Swedish-language GPS
+> trip meter web app (*trippmätare*) that measures how many metres you move,
+> using Doppler-speed integration and a stationarity veto for metre-level
+> accuracy. See [`trippmatare/README.md`](trippmatare/README.md).
+
 A perfectly-looping northern-lights animation (6 s, 30 fps, 1080×2340 — the
 iPhone lock screen aspect ratio), plus the pipeline that renders it.
 

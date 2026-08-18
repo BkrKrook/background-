@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "description": "Perfectly-looping aurora live wallpaper for iPhone lock screen",
   "scripts": {
-    "render": "node render.mjs"
+    "render": "node render.mjs",
+    "test:tripp": "node trippmatare/test/accuracy.test.mjs"
   },
   "license": "ISC",
   "dependencies": {
